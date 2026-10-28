@@ -74,6 +74,10 @@ dependencies:
     version: "^1.0.0"
     rules:
       - if: "$CONFIG{MUSE_BOARD_ID} == \"waveshare_c6_18\""
+  waveshare/esp32_s3_touch_amoled_1_8:
+    version: "^2.0.3"
+    rules:
+      - if: "$CONFIG{MUSE_BOARD_ID} == \"waveshare_s3_18\""
   waveshare/esp32_c6_touch_amoled_2_06:
     version: "2.0.0"
     rules:

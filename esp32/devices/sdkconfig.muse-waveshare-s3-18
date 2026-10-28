@@ -1,0 +1,82 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Waveshare ESP32-S3-Touch-AMOLED-1.8, V2 revision: ESP32-S3R8, 16 MB
+# flash, 8 MB octal PSRAM, native USB Serial/JTAG.
+#
+# Pin/fact sources (cite per devices/AGENTS.md, do not guess pins):
+#  - Waveshare official manual: https://docs.waveshare.com/ESP32-S3-Touch-AMOLED-1.8
+#    (V2 = CO5300 display over QSPI + CST820 touch over I2C, 368x448;
+#    QSPI CS=12 SCLK=11 D0-D3=4,5,6,7; touch I2C SCL=14 SDA=15 INT=21;
+#    I2S MCLK=16 BCLK=9 LRCK=45 SPK=8 MIC=10 PA_CTRL=46; TF CMD=1 CLK=2
+#    D0=3; PWR key only reaches the PMU; BOOT=GPIO0)
+#  - Vendor repo (clone it, do not read on the web):
+#    https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8
+#    Managed BSP: waveshare/esp32_s3_touch_amoled_1_8 ^2.0.3 (ESP Component Registry)
+#  - Schematic: files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8/ESP32-S3-Touch-AMOLED-1.8-Schematic.pdf
+#
+# Load last, after sdkconfig.muse.
+
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_MUSE_BOARD_WAVESHARE_S3_18=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Static buffers in PSRAM: Wi-Fi's, lwIP's and BT's, and those marked
+# EXT_RAM_BSS_ATTR (Muse's chat turn, the tunnel batch). Without it light
+# sleep's code leaves Link under 16 KB of DMA RAM once connected, too little
+# to send link.register, so the tunnel never opens. The chip always has
+# PSRAM, so booting without it needn't be allowed.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+# CONFIG_SPIRAM_IGNORE_NOTFOUND is not set
+
+# That forces Wi-Fi's TX buffers static, in internal RAM: 8, not 16, at 1.6 KB
+# each, which voice over the tunnel doesn't fill.
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+
+# NOTE vs the 1.75C overlay: no CONFIG_ESPTOOLPY_FLASHSIZE override. The
+# 1.75C board carries 32 MB flash; this one carries 16 MB, which is the muse
+# default (partitions_muse.csv needs 16 MB or more).
+# The vendor's own sdkconfig.defaults for this board uses QIO flash mode.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# The BSP's bsp_display_start_with_config() ignores the runtime draw-buffer
+# size: its LVGL buffer is H_RES x CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT. The
+# vendor firmware for this board sets 10 lines, with this comment: the BSP
+# default of 100 lines means a 73,600-byte internal allocation per flush;
+# after Wi-Fi and the launcher have claimed their internal RAM that
+# allocation fails and the frame is dropped, which shows up as a partially
+# drawn screen. Ten lines need only 7,360 bytes, which always fits, and
+# still transfers a full frame in ~22 ms over QSPI.
+CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=10
+# The vendor firmware also runs the touch I2C bus at 400 kHz (the BSP
+# default with fast mode); set it explicitly so a BSP default change
+# cannot silently slow touch.
+CONFIG_BSP_I2C_CLK_SPEED_HZ=400000
+
+# No light-sleep PM block: this board has no display_pause (the BSP
+# exposes no touch-sleep command or touch-reset GPIO for it), so LVGL
+# keeps running and the CPU stays at full speed when the screen is dark.
+# Screen-off only dims the panel through set_brightness.
