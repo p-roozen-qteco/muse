@@ -89,6 +89,28 @@ Validation on 29 October 2026:
 - These were token-free compilation checks, as in the repository's CI.
   They were not flashed and are not published as configured releases.
 
+Hardware installation check on 29 October 2026:
+
+- A full 16 MB backup was saved privately before writing. Its transfer digest
+  passed and its partition table matched this profile. The original app reported
+  `999.0.0` and the Waveshare S3 1.8 board name.
+- The owner confirmed that Muse appeared and touch responded with the first
+  screen-fix build. The default UART-primary/USB-secondary console did not
+  return application logs or status over USB. This overlay now selects native
+  USB Serial/JTAG as the primary console, with no secondary console.
+- The personal build `999.0.0-s3fix.c57b3a5-usb` was installed with all four
+  flash writes verified. NVS was read back before starting the app and was
+  byte-for-byte identical to its pre-write contents.
+- A full restart with esptool 5.6.0's `watchdog-reset` exited the download mode
+  that the simple RTS reset had retained. The boot log confirmed the version,
+  `QSPI bands: 112 rows, 2 x 5888-byte DMA buffers`, and `UI up: 368x448`.
+  USB status replies worked; Wi-Fi was connected and pairing was retained.
+- No fatal boot markers appeared in the captured startup. Nonfatal messages
+  included an already-installed GPIO ISR service, the panel initialization's
+  3Ah override and disabled advanced LVGL gesture recognition. Actual photo
+  delivery, speaker quality and extended stability have not yet been verified.
+- Personal binaries, backups and raw logs contain private data and remain local.
+
 ## Test on one board before updating the other four
 
 1. Record the currently working firmware version and keep its original
@@ -98,6 +120,12 @@ Validation on 29 October 2026:
 2. Use this project's own `flash_args` with its build, not the old Muse Open
    0.3 merged-image instructions. This SDK uses a different partition layout.
    Preserve NVS and do not use `erase-flash`.
+   This board has **PWR and BOOT**, not a separate RESET button. If automatic
+   download fails, hold PWR for at least six seconds to switch off, hold BOOT,
+   then briefly press PWR to power on; release BOOT after startup. After flashing,
+   a simple USB reset may retain download mode. Power-cycle with PWR without
+   holding BOOT, or use esptool 5.6.0's supported `watchdog-reset` on this S3.
+   See the [Waveshare board instructions](https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8).
 3. Capture the boot log. Expect the board name, PSRAM, `UI up: 368x448`, and
    `QSPI bands: 112 rows, 2 x 5888-byte DMA buffers`. Note any allocation,
    SPI, panic or watchdog messages. Redact tokens and personal data before sharing.
