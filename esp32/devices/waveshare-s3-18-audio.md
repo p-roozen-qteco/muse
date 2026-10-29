@@ -1,83 +1,118 @@
-# Waveshare S3 1.8 V2: spoken replies
+# Waveshare S3 1.8 V2: audio-message playback
 
-The existing BOOT interaction is unchanged: hold to record a voice note,
-release to send it. With the speaker enabled, the S3 1.8 profile now requests
-a spoken answer and plays Muse's MP3 reply while showing its text captions.
-There is no live call and no new external text-to-speech account.
+The S3 1.8 profile advertises `audio.play_file`, `audio.play_reply` and
+`audio.stop` to Muse. The first command plays a private MP3 from the connected
+Muse VM, optionally with its transcript on screen. This gives Muse an explicit
+speaker command; it must supply a real audio file or an existing voice message.
+The device does not generate speech from text by itself.
 
-## Configuration and protocol
+BOOT still records and sends the original voice-note request with
+`output_modality: "text"`. Microphone gain, capture rate, microphone driver,
+pre-roll and recording payload are unchanged from the working screen/USB build.
+No instruction or language hint is appended to the recording. Live calls remain
+disabled. The speaker uses the existing ES8311, volume setting and 16 kHz mono
+output; this change does not upgrade the physical speaker or promise hi-fi sound.
 
-`CONFIG_MUSE_SPOKEN_REPLIES` is off by default and requires `MUSE_HATCH` and
-PSRAM. The `sdkconfig.muse-waveshare-s3-18` overlay enables it. Existing build
-directories must also enable it in their generated `sdkconfig` or be rebuilt
-with the updated defaults. `CONFIG_MUSE_REALTIME_VOICE` remains off.
+## Configuration
 
-- At BOOT press, the enabled speaker selects `output_modality: "voice"` for
-  the existing `/chat/stream` voice-note request. Muted and typed-console turns
-  retain text modality. Muting before playback avoids requesting the MP3.
-- A completed assistant message belonging to that turn is fetched through
-  the existing authenticated Muse daemon session with
-  `GET /api/voice/tts-stream?message_id=…`, accepting `audio/mpeg`.
-  Message IDs are encoded as one query value; no supplied URL is fetched.
-- A 404 retries `/voice/tts-stream` once. Other HTTP errors, connection resets,
-  empty/invalid MP3, buffer overflow or 30 seconds without progress fall back
-  to the already received text. Authentication failures are not retried on
-  another route. Audio failure does not invent or replace the reply text.
-- Existing bounded MP3 buffering, TCP backpressure, streaming decoding and
-  conversion to 16 kHz mono feed the onboard ES8311 speaker path. Captions use
-  the decoded playback duration. A new BOOT turn cancels the old audio stream;
-  late packets cannot feed the next reply. The existing three-minute turn cap
-  still applies, so unusually long answers may be cut off.
+The S3 1.8 overlay enables `CONFIG_MUSE_AUDIO_COMMANDS` and disables
+`CONFIG_MUSE_SPOKEN_REPLIES`. Both options default off on other boards and
+require Muse, its VM connection and PSRAM. Existing build directories must
+update their generated `sdkconfig` as well as the overlay. Keep
+`CONFIG_MUSE_REALTIME_VOICE` off for this test.
 
-The route and modality contract comes from this repository's
-[`linux/src/musegadget/link_client.py`](../../linux/src/musegadget/link_client.py)
-(`send_voice`, `send_chat`, `stream_tts`). Backend support must still be checked
-with the user's Muse account. This feature plays replies to a device voice
-note; it is not a general player for unsolicited app attachments or music.
+`CONFIG_MUSE_SPOKEN_REPLIES` is still an experimental option for installations
+where native voice replies work. It is deliberately off here: test1 requested
+voice modality, but the user's service returned an empty assistant message and
+the app displayed an error. No TTS download started in that captured turn. This
+does not establish the cause of the separate Dutch transcription problem.
 
-## Validation
+## Commands and data flow
 
-The production request, stream-dispatch and MP3-decoding functions are exercised
-by `tests/test_muse_spoken_replies.py`. Tests cover voice/text selection, mute,
-query encoding, the one-time 404 fallback, HTTP refusals, timeouts, reset,
-invalid/empty audio, buffer overflow, cancellation, stale streams and a real
-MP3 delivered in 137-byte fragments. Existing reply correlation/caption tests
-also run with the feature disabled.
+- `audio.play_file`: required `path` (1–511 UTF-8 bytes), optional `text`
+  (up to 1023 UTF-8 bytes). Uses authenticated `GET /fs/raw/<encoded path>`,
+  the same VM file API as image downloads. No public upload is required.
+  Only MP3 is decoded: Muse must create an MP3 with its available speech tools
+  or convert an existing WAV/Opus file first. The firmware does not configure
+  or purchase a text-to-speech service.
+- `audio.play_reply`: required `message_id`, same optional `text`. Uses
+  `/api/voice/tts-stream?message_id=…`, with a single `/voice/tts-stream` retry
+  on 404. This needs an assistant message with audio already generated by Muse;
+  an ordinary text response does not automatically become speech.
+- `audio.stop`: cancels the queued or playing message. A new BOOT press also
+  interrupts playback so the owner can speak. Mute and volume zero are honored.
 
-ESP-IDF 6.0.1 builds passed for the S3 1.8 with the option enabled and the
-S3 2.16 with it disabled. The personal S3 1.8 test image is
-`999.0.0-s3audio-test1`, 2,166,784 bytes, with 48% of its 4 MB app slot free.
-Across the full host run and focused environment retries, 832 distinct tests
-passed and four optional tests were skipped (host VP8/x264 encoders, PSA
-development libraries and the pinned PPK2 package). The retries supplied
-CMake, ESP-IDF and Python cryptography; the simulator avatar add/remove test
-passed with Ninja after failing with the local Make generator. No simulator
-or other unrelated source was changed for those environment adaptations.
+Commands are registered only after audio initialization succeeds. They copy
+arguments and return asynchronously. The playback result is sent to the same
+request and connection generation only after playback finishes or fails.
+`played: true` requires decoded samples successfully written to the codec;
+that is a firmware result, not proof that a human heard the speaker. Missing
+files, unsupported audio, mute, interruption and download errors return errors.
 
-On 29 October 2026 a full 16 MB backup of the working screen/USB firmware was
-saved before installation. All four flash writes verified; NVS was identical
-before and after writing. USB status confirmed the new version, Wi-Fi,
-retained Muse pairing, speaker enabled and volume 35%. The owner's local MP3
-test was clearly audible. An actual spoken Muse answer is the remaining
-end-to-end acceptance check; a successful local MP3 test alone does not prove it.
-Personal images, credentials, backup contents and raw diagnostic logs stay local.
+The existing voice task remains the sole speaker writer. After a BOOT note is
+acknowledged by Muse, a queued playback command can take over the speaker
+without waiting for the assistant that is itself waiting on the command result.
+No speaker audio is deliberately mixed into a microphone recording. After
+playback, queued DAC samples are flushed with silence and pre-roll is cleared.
 
-## Test on the first board
+File requests use 32 KiB HTTP ranges with bounded MP3 buffering and TCP
+backpressure. The server must honor ranges for larger files. File downloads
+are bounded below 8 MiB; a turn is limited to three minutes, including download
+and decoding. A 30-second lack of progress fails the command. Stereo and other
+MP3 sample rates are converted to 16 kHz mono. Arbitrary web URLs are not accepted.
+Captions are displayed in the existing caption area; the optional caption is
+limited to 1023 bytes and is not word-aligned by a speech service.
 
-1. Follow the backup/flash procedure in
-   [`waveshare-s3-18-display.md`](waveshare-s3-18-display.md). Preserve NVS and
-   use the generated split `flash_args`, not an image from Muse Open 0.3.
-2. Keep the speaker enabled and initially set volume to 35%.
-3. Hold BOOT, ask a short question and release. Check the text and audible
-   answer. Diagnostic logs should show a TTS GET and `reply audio: … Hz`.
-4. Ask a second question while the first answer is playing. Confirm the first
-   answer stops and that its late audio does not enter the next answer.
-5. Mute the speaker and repeat: text should remain available. Re-enable the
-   speaker for the next voice note and verify audio returns.
-6. Recheck a photo from the Muse app, touch controls and screen blank/wake.
-   Do not update the other four boards until these checks pass.
+## Test history and current status
 
-If text arrives without sound, inspect the local log for `reply audio: HTTP …`
-or `reply audio unavailable (…)`. Keep tokens and conversation contents out
-of shared logs. A 403 is an authorization/backend issue, not a speaker wiring
-fault; a 404 on both routes means the service did not provide that audio.
+On 29 October 2026 the owner heard the local MP3 self-test clearly. The
+`999.0.0-s3audio-test1` trial did not deliver the requested Muse speech, and it
+advertised no incoming audio command. It is superseded by this implementation.
+A full 16 MB backup was saved and the working screen/USB build
+`999.0.0-s3fix.c57b3a5-usb` was restored. All four write hashes verified and NVS
+was byte-identical before and after restoration. The device remains on that
+version while the owner compares Dutch transcription.
+
+The new candidate is `999.0.0-s3audio-test2`. Computer validation exercises the
+real registration builder, command validation and asynchronous completion,
+original text-modality voice request, MP3 decoding across fragments and HTTP
+ranges, captions, mute, BOOT interruption, missing files and stale streams.
+ESP-IDF 6.0.1 builds passed for S3 1.8 with audio commands enabled and
+S3 2.16 with them disabled. The candidate app is 2,166,784 bytes, leaving
+48% of its 4 MiB slot free. The full host suite ran 855 tests: 851 passed
+and four optional dependency checks were skipped. Hardware registration,
+an actual Muse-generated spoken message and Dutch transcription
+still require acceptance on the first board. A local MP3 test alone does not
+prove the complete Muse-to-speaker route.
+
+Personal firmware, credentials, backups and raw conversation logs stay local.
+
+## Acceptance on one board
+
+1. Before installing the candidate, compare a short Dutch BOOT question on
+   the restored version and record what the app transcribes. Do not change
+   microphone gain during that comparison.
+2. Follow the backup and split-flash procedure in
+   [`waveshare-s3-18-display.md`](waveshare-s3-18-display.md), preserving NVS.
+   Verify the version and retained settings after restarting.
+3. After the board reconnects, confirm Muse sees `audio.play_file` among this
+   gadget's current commands. A chat claim that a gadget supports audio is
+   not a substitute for the registered command list.
+4. Ask Muse in the app to create a short Dutch MP3 and invoke `audio.play_file`
+   on this gadget, with the same text as its caption. Confirm both audible
+   speech and visible text. If Muse cannot create the file, resolve that
+   service-side capability before treating the device playback as tested.
+5. Repeat via a BOOT question. Confirm the original Dutch transcription and
+   normal text reply, then the requested MP3 playback. Merely enabling the
+   firmware does not force all app conversations to produce voice messages.
+6. During playback, press BOOT and speak. Verify the old audio stops and its
+   tail does not appear in the new recording. Check mute, volume zero,
+   `audio.stop`, a missing file and reconnect after Wi-Fi loss.
+7. Repeat the previously failing photo transfer and screen/touch sleep/wake
+   checks. Do not update the other four boards until these checks pass.
+
+For diagnosis, inspect `audio command failed`, `reply audio: HTTP …` and
+`reply audio: … Hz` locally. Never share credentials or raw conversation logs.
+A server error or absent voice asset must not be presented as successful audio
+playback. The separate transcription issue remains under comparison until
+there is a before/after recording to assess.

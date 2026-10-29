@@ -95,6 +95,10 @@ else()
     list(APPEND GADGET_SRCS "led_status.c")
 endif()
 
+if(CONFIG_MUSE_AUDIO_COMMANDS)
+    list(APPEND GADGET_SRCS "audio_commands.c")
+endif()
+
 if(CONFIG_MUSE_ENABLED)
     list(APPEND GADGET_SRCS "muse_glue.c")
 endif()

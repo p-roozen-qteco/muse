@@ -114,7 +114,7 @@ Hardware installation check on 29 October 2026:
   this establishes output functionality, not a full audio quality measurement.
 - Personal binaries, backups and raw logs contain private data and remain local.
 
-For spoken answers to BOOT voice notes, see
+For the experimental Muse audio-message playback commands, see
 [`waveshare-s3-18-audio.md`](waveshare-s3-18-audio.md).
 
 ## Test on one board before updating the other four

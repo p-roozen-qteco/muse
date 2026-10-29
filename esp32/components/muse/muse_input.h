@@ -84,3 +84,6 @@ void muse_input_touch_talk(bool pressed);
 
 /* Plays the goodbye animation and powers off (from the input task). */
 void muse_input_request_power_off(void);
+
+/* Queue screen wake on the input task (e.g. an incoming audio message). */
+void muse_input_request_wake(void);

@@ -39,7 +39,10 @@ class SpokenReplies(unittest.TestCase):
 #define MINIMP3_IMPLEMENTATION
 #include "minimp3.h"
 #include "muse_chat_priv.h"
+#ifndef CONFIG_MUSE_SPOKEN_REPLIES
 #define CONFIG_MUSE_SPOKEN_REPLIES 1
+#endif
+#define CONFIG_MUSE_AUDIO_COMMANDS 1
 static const char *TAG = "test";
 static void host_log(const char *, const char *, ...) {}
 #define ESP_LOGI(...) host_log(__VA_ARGS__)
@@ -49,8 +52,8 @@ static turn_t s_turn;
 static char s_reply_shown[EV_TEXT];
 static int64_t s_marks[8], clock_us = 1000;
 static int captions, requests, resets;
-static bool speaker_on = true, request_fails;
-static std::string last_path, last_verb, last_accept, sent_body;
+static bool speaker_on = true, request_fails, explicit_file;
+static std::string last_path, last_verb, last_accept, sent_body, last_range;
 static std::atomic<uint32_t> s_gen{1};
 static int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME], pcm16[MINIMP3_MAX_SAMPLES_PER_FRAME];
 static int16_t *s_pcm = pcm, *s_pcm16 = pcm16;
@@ -83,10 +86,10 @@ static bool send_reset(int64_t id) {
     return true;
 }
 static int64_t open_stream(kind_t kind, const char *verb, const char *path,
-                          const char *, const char *accept, const char *, bool) {
+                          const char *, const char *accept, const char *, bool, const char *range = nullptr) {
     static int64_t next_id = 10;
     requests++;
-    last_path = path; last_verb = verb; last_accept = accept ? accept : "";
+    last_path = path; last_verb = verb; last_accept = accept ? accept : ""; last_range = range ? range : "";
     if (request_fails) return 0;
     for (auto &s : s_streams) if (s.kind == K_NONE) {
         s = stream_t{}; s.kind = kind; s.id = next_id++; s.msg = -1;
@@ -128,6 +131,10 @@ static void begin(bool typed = false) {
     s_turn.mp3 = mp3; s_turn.note = note; s_turn.texts = texts;
     assert(turn_start(++s_gen, typed));
     s_turn.phase = P_WAIT_REPLY;
+    if (explicit_file) {
+        s_turn.audio_source = MUSE_AUDIO_FILE;
+        strlcpy(s_turn.audio_target, "/workspace/reply ?#.mp3", sizeof(s_turn.audio_target));
+    }
 }
 static void reply() {
     s_turn.nmsgs = 1;
@@ -218,6 +225,66 @@ static void cancelled() {
     response(stale, 403);
     assert(s_turn.tts_id == current && !s_turn.silent);
 }
+static void file_errors() {
+    explicit_file = true; begin(); reply();
+    assert(last_path == "/fs/raw/workspace/reply%20%3F%23.mp3");
+    response(s_turn.tts_id, 404);
+    assert(requests == 1 && s_turn.phase == P_IDLE && !s_turn.tts_id);
+    begin(); reply(); response(s_turn.tts_id, 200, true); decode();
+    assert(s_turn.phase == P_IDLE && !s_turn.silent);
+}
+static void file_ranges() {
+    explicit_file = true; begin(); reply();
+    assert(last_range == "bytes=0-32767");
+    auto first = s_turn.tts_id;
+    response(first, 206);
+    static uint8_t block[AUDIO_FILE_CHUNK] = {};
+    chunk(first, block, sizeof(block), true);
+    assert(s_turn.tts_id != first && !s_turn.mp3_ended);
+    assert(s_turn.audio_offset == AUDIO_FILE_CHUNK && s_turn.mp3_len == AUDIO_FILE_CHUNK);
+    assert(last_range == "bytes=32768-65535");
+    response(s_turn.tts_id, 416);
+    assert(s_turn.mp3_ended && !s_turn.tts_id);
+    // A server ignoring the second range must not replay the whole file.
+    begin(); reply(); response(s_turn.tts_id, 206);
+    chunk(s_turn.tts_id, block, sizeof(block), true);
+    response(s_turn.tts_id, 200);
+    assert(s_turn.phase == P_IDLE);
+    // Oversized first responses are stopped within the fixed buffer.
+    begin(); reply(); response(s_turn.tts_id, 200);
+    chunk(s_turn.tts_id, block, sizeof(block));
+    chunk(s_turn.tts_id, block, 1);
+    assert(s_turn.phase == P_IDLE);
+}
+static void original_input() {
+    speaker_on = true; begin();
+    assert(!s_turn.spoken && open_note());
+    assert(sent_body == MUSE_HATCH_NOTE_HEAD);
+}
+static void ranged_playback(const char *file) {
+    std::ifstream in(file, std::ios::binary);
+    std::vector<uint8_t> sample((std::istreambuf_iterator<char>(in)), {}), bytes;
+    for (int i = 0; i < 3; i++) bytes.insert(bytes.end(), sample.begin(), sample.end());
+    assert(bytes.size() > 2 * AUDIO_FILE_CHUNK);
+    explicit_file = true; begin(); reply();
+    for (size_t off = 0; off < bytes.size();) {
+        auto id = s_turn.tts_id;
+        assert(id && s_turn.audio_offset == off);
+        response(id, 206);
+        size_t end = std::min(off + AUDIO_FILE_CHUNK, bytes.size());
+        while (off < end) {
+            size_t n = std::min(size_t(137), end - off);
+            chunk(id, bytes.data() + off, n, off + n == end);
+            off += n; decode();
+            if (queue_used > OUT_BYTES / 2) queue_used = 0;
+        }
+    }
+    for (int i = 0; s_turn.tts_msg >= 0 && i < 100; i++) { queue_used = 0; decode(); }
+    assert(s_turn.tts_msg == -1 && s_turn.msgs[0].tts == TTS_FINISHED);
+    assert(requests == 3 && !s_turn.tts_id && !s_turn.mp3_len);
+    assert(output.size() > 170000 && output.size() < 180000);
+    assert(s_turn.msgs[0].pcm_frames == output.size());
+}
 static void playback(const char *file) {
     std::ifstream in(file, std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
@@ -253,6 +320,11 @@ int main(int argc, char **argv) {
     case 2: failures(); break;
     case 3: cancelled(); break;
     case 4: playback(argv[2]); break;
+    case 5: explicit_file = true; playback(argv[2]); break;
+    case 6: file_errors(); break;
+    case 7: original_input(); break;
+    case 8: file_ranges(); break;
+    case 9: ranged_playback(argv[2]); break;
     default: return 2;
     }
 }
@@ -268,11 +340,21 @@ int main(int argc, char **argv) {
         if result.returncode:
             raise AssertionError(result.stdout + result.stderr)
 
-    def run_case(self, case):
-        result = subprocess.run([str(self.binary), str(case),
+        cls.file_binary = out / 'file_only'
+        command[-1] = str(cls.file_binary)
+        command.insert(1, '-DCONFIG_MUSE_SPOKEN_REPLIES=0')
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+
+    def run_case(self, case, file_only=False):
+        result = subprocess.run([str(self.file_binary if file_only else self.binary), str(case),
                                  str(ROOT / 'components/muse/test_reply.mp3')],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_real_mp3_continues_across_three_file_ranges(self):
+        self.run_case(9, file_only=True)
 
     def test_request_modality_respects_speaker_and_typed_turns(self):
         self.run_case(0)
@@ -288,3 +370,13 @@ int main(int argc, char **argv) {
 
     def test_fragmented_mp3_reaches_speaker_queue_with_caption_timing(self):
         self.run_case(4)
+
+    def test_vm_file_mp3_plays_without_changing_boot_modality(self):
+        self.run_case(5, file_only=True)
+        self.run_case(7, file_only=True)
+
+    def test_file_failure_has_no_native_route_retry_or_fake_silent_success(self):
+        self.run_case(6, file_only=True)
+
+    def test_vm_audio_uses_bounded_ranges_and_rejects_ignored_ranges(self):
+        self.run_case(8, file_only=True)

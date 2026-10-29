@@ -299,6 +299,16 @@ menu "Muse"
             speaker keeps text-only replies. Missing, refused or stalled audio
             falls back to the text; no external TTS provider is used.
 
+    config MUSE_AUDIO_COMMANDS
+        bool "Let Muse send audio messages to the gadget"
+        depends on MUSE_ENABLED && MUSE_HATCH && SPIRAM
+        default n
+        help
+            Advertise audio.play_file and audio.play_reply to the paired Muse.
+            Stream MP3 from that VM, play it on the speaker and show supplied
+            text. BOOT interrupts playback. Recording and transcription keep
+            their existing text-output voice-note request.
+
     config MUSE_REALTIME_VOICE
         bool "Live voice calls with Muse (experimental)"
         depends on (MUSE_HATCH || HOMEHUB_VOICE) && SPIRAM
