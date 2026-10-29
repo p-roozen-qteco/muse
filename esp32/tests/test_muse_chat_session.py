@@ -25,8 +25,8 @@ class ChatSession(unittest.TestCase):
         types = source[source.index('enum phase_t'):source.index('/* 10 KB')]
         handlers = source[source.index('static int find_msg('):source.index('static void on_chat_ack(')]
         reset = source[source.index('static bool turn_start('):source.index('static void turn_begin(')]
-        tts = source.index('static void start_tts(void)')
-        start_tts = source[tts:source.index('\n}\n', tts) + 3]
+        tts = source.index('/* Captions remain available')
+        start_tts = source[tts:source.index('static void tts_data(', tts)]
         code = r'''
 #include <cassert>
 #include <cstdint>
@@ -39,6 +39,9 @@ class ChatSession(unittest.TestCase):
 #include "minimp3.h"
 #include "muse_chat_priv.h"
 #define ESP_LOGI(...) ((void)0)
+static void host_log(const char *, const char *, ...) {}
+#define ESP_LOGW(...) host_log(__VA_ARGS__)
+static const char *TAG = "test";
 ''' + constants + types + r'''
 static turn_t s_turn;
 static char s_reply_shown[EV_TEXT];
@@ -58,6 +61,7 @@ bool muse_hatch_caption_at(const char *text, size_t, char *out, size_t cap) {
 static void turn_finish() { s_turn.phase = P_IDLE; }
 static void turn_fail(const char *) { turn_finish(); }
 static bool ensure_connected() { return true; }
+static bool send_reset(int64_t) { return true; }
 bool muse_hatch_configured() { return true; }
 static void resampler_init(resampler_t *, int, int) {}
 ''' + reset + handlers + start_tts + r'''

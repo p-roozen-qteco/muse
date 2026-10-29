@@ -34,6 +34,9 @@ CONFIG_MUSE_BOARD_WAVESHARE_S3_18=y
 # Muse's USB console driver, printf status replies and logs use one path.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# Hold BOOT or the on-screen microphone as before; play Muse's reply audio
+# alongside its captions. Live calls remain disabled.
+CONFIG_MUSE_SPOKEN_REPLIES=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y

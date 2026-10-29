@@ -107,9 +107,15 @@ Hardware installation check on 29 October 2026:
   USB status replies worked; Wi-Fi was connected and pairing was retained.
 - No fatal boot markers appeared in the captured startup. Nonfatal messages
   included an already-installed GPIO ISR service, the panel initialization's
-  3Ah override and disabled advanced LVGL gesture recognition. Actual photo
-  delivery, speaker quality and extended stability have not yet been verified.
+  3Ah override and disabled advanced LVGL gesture recognition.
+- The owner subsequently confirmed that photo delivery worked and the screen
+  was substantially more stable. The repeated stress sequence below remains
+  to be completed. A local MP3 speaker test at 35% volume was clearly audible;
+  this establishes output functionality, not a full audio quality measurement.
 - Personal binaries, backups and raw logs contain private data and remain local.
+
+For spoken answers to BOOT voice notes, see
+[`waveshare-s3-18-audio.md`](waveshare-s3-18-audio.md).
 
 ## Test on one board before updating the other four
 
