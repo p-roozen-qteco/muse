@@ -23,13 +23,17 @@
 #    D0=3; PWR key only reaches the PMU; BOOT=GPIO0)
 #  - Vendor repo (clone it, do not read on the web):
 #    https://github.com/waveshareteam/ESP32-S3-Touch-AMOLED-1.8
-#    Managed BSP: waveshare/esp32_s3_touch_amoled_1_8 ^2.0.3 (ESP Component Registry)
+#    Managed BSP: waveshare/esp32_s3_touch_amoled_1_8 2.0.3 (ESP Component Registry)
 #  - Schematic: files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8/ESP32-S3-Touch-AMOLED-1.8-Schematic.pdf
 #
 # Load last, after sdkconfig.muse.
 
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_MUSE_BOARD_WAVESHARE_S3_18=y
+# The connector is the S3's native USB Serial/JTAG. Keep it primary so
+# Muse's USB console driver, printf status replies and logs use one path.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
@@ -62,15 +66,10 @@ CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
 # The vendor's own sdkconfig.defaults for this board uses QIO flash mode.
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 
-# The BSP's bsp_display_start_with_config() ignores the runtime draw-buffer
-# size: its LVGL buffer is H_RES x CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT. The
-# vendor firmware for this board sets 10 lines, with this comment: the BSP
-# default of 100 lines means a 73,600-byte internal allocation per flush;
-# after Wi-Fi and the launcher have claimed their internal RAM that
-# allocation fails and the frame is dropped, which shows up as a partially
-# drawn screen. Ten lines need only 7,360 bytes, which always fits, and
-# still transfers a full frame in ~22 ms over QSPI.
-CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=10
+# Drawing uses Muse's QSPI bands transport, not the BSP's RGB LVGL wrapper.
+# Two 112-row draw buffers live in PSRAM; two fixed 5,888-byte internal DMA
+# buffers send eight rows at a time. No BSP_DISPLAY_LVGL_BUF_HEIGHT setting:
+# that belongs to the unused BSP wrapper and does not size Muse's buffers.
 # The vendor firmware also runs the touch I2C bus at 400 kHz (the BSP
 # default with fast mode); set it explicitly so a BSP default change
 # cannot silently slow touch.

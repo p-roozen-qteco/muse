@@ -42,40 +42,51 @@
  *  - Schematic: https://files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.8/ESP32-S3-Touch-AMOLED-1.8.pdf
  *    (QSPI/I2C/I2S nets agree with the pin map above).
  *
- * Deliberate non-changes, all unverified on hardware (see the pull
- * request): the AXP2101 rails are left as the BSP/factory defaults. The
+ * The AXP2101 rails are left as the BSP/factory defaults. The
  * vendor's AXP2101 example only reads rails, the BSP has no PMU code,
  * and the schematic text does not cleanly say which rail feeds
  * display/touch/audio, so no muse_pmu_keep_rails() mask is applied here
  * (unlike the 1.75C board, whose schematic leaves the rest
  * unconnected). Likewise display_pause, panel_sleep and draw_frame are
  * NULL: the BSP exposes no touch-sleep command or touch-reset GPIO
- * for this board, so the 1.75C's CST9217 sleep sequence and the
- * bands/TE path cannot be copied, and LVGL keeps running when the
+ * for this board, so the 1.75C's CST9217 sleep sequence cannot be copied.
+ * LVGL keeps running when the
  * screen is dark. The button hints are left unset: the wiki and
  * schematic do not settle the physical order of the PWR and BOOT side
  * buttons, and the 1.75C/C6 coordinates are for different boards.
  *
- * The BSP's bsp_display_start_with_config() ignores the runtime
- * buffer_size/double_buffer/flags: its LVGL buffer geometry comes from
- * CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT (the overlay sets 10, the vendor
- * firmware's value). Only lvgl_port_cfg is passed here.
+ * Display transport: BSP 2.0.3's bsp_display_lcd_init() registers this
+ * QSPI panel with lvgl_port_add_disp_rgb(). That path installs RGB-panel
+ * callbacks and reports flush-ready before the SPI transfer completes.
+ * Use the BSP only for panel/touch setup, and Muse's existing QSPI bands
+ * transport for drawing, as on the 2.16-inch CO5300 board. Tall PSRAM
+ * draw buffers keep swipes efficient; two fixed internal DMA buffers
+ * avoid per-flush allocations after Wi-Fi/BLE have fragmented SRAM.
+ * Source: waveshareteam/Waveshare-ESP32-components@23a6012d5e87d27399cf90fb851cab3689e29159,
+ * bsp/esp32_s3_touch_amoled_1_8/esp32_s3_touch_amoled_1_8.c.
  */
 #include "bsp/esp-bsp.h"
 #include "bsp/display.h"
+#include "bsp/touch.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_lv_adapter.h"
 
 #include "muse_audio.h"
 #include "muse_board.h"
+#include "muse_lcd_bands.h"
+#include "muse_mem.h"
 #include "muse_pmu.h"
 
 static const char *TAG = "board";
 
 #define BOOT_GPIO GPIO_NUM_0    /* BOOT is GPIO0 on the ESP32-S3 */
 #define PMU_KEY_EVERY 2         /* poll the PMU over I2C every 20 ms */
+#define DRAW_BUF_LINES 112      /* four bands for the 448-row screen */
+#define LCD_CHUNK_BYTES (BSP_LCD_H_RES * 8 * 2)
 
 static muse_gpio_button_t s_boot;
+static esp_lcd_touch_handle_t s_tp;
 
 static esp_err_t init(void)
 {
@@ -87,29 +98,82 @@ static esp_err_t init(void)
     return ESP_OK;
 }
 
+/* Same even-aligned windows as the BSP's CO5300 rounder. */
+static void round_area(lv_event_t *e)
+{
+    lv_area_t *a = lv_event_get_param(e);
+    a->x1 &= ~1;
+    a->y1 &= ~1;
+    a->x2 |= 1;
+    a->y2 |= 1;
+}
+
 static lv_display_t *display_start(lv_indev_t **touch)
 {
-    lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-    port_cfg.task_stack = 8192;
-    /* Only lvgl_port_cfg reaches the BSP: buffer geometry comes from
-     * CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT (see the overlay). */
-    const bsp_display_cfg_t cfg = {
-        .lvgl_port_cfg = port_cfg,
+    *touch = NULL;
+    esp_lv_adapter_config_t adapter_cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+    adapter_cfg.task_core_id = MUSE_UI_CORE;
+    adapter_cfg.task_priority = MUSE_UI_PRIORITY;
+    if (esp_lv_adapter_init(&adapter_cfg) != ESP_OK) {
+        return NULL;
+    }
+
+    /* muse_glue starts us on MUSE_UI_CORE: the SPI ISR and lcd_send task
+     * must share that core (muse_lcd_bands.h). BSP 2.0.3 ignores the transfer
+     * size field, but every transfer we submit is bounded by our DMA chunks. */
+    esp_lcd_panel_handle_t panel;
+    esp_lcd_panel_io_handle_t io;
+    const bsp_display_config_t panel_cfg = { .max_transfer_sz = LCD_CHUNK_BYTES };
+    if (bsp_display_new(&panel_cfg, &panel, &io) != ESP_OK) {
+        return NULL;
+    }
+    /* The touch probe also sets the panel's V2-specific x gap. Finish it
+     * before starting any rendering, and keep the BSP's default orientation. */
+    if (bsp_touch_new(NULL, &s_tp) != ESP_OK || bsp_display_brightness_init() != ESP_OK) {
+        return NULL;
+    }
+
+    const esp_lv_adapter_display_config_t disp_cfg = {
+        .panel = panel,
+        .panel_io = io,
+        .profile = {
+            .interface = ESP_LV_ADAPTER_PANEL_IF_OTHER,
+            .rotation = ESP_LV_ADAPTER_ROTATE_0,
+            .hor_res = BSP_LCD_H_RES,
+            .ver_res = BSP_LCD_V_RES,
+        },
+        .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_NONE,
     };
-    lv_display_t *disp = bsp_display_start_with_config(&cfg);
-    *touch = bsp_display_get_input_dev();
+    lv_display_t *disp = muse_lcd_bands_register(disp_cfg, DRAW_BUF_LINES, LCD_CHUNK_BYTES);
+    if (!disp) {
+        return NULL;
+    }
+    lv_display_add_event_cb(disp, round_area, LV_EVENT_INVALIDATE_AREA, NULL);
+
+    const esp_lv_adapter_touch_config_t tp_cfg = ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, s_tp);
+    *touch = esp_lv_adapter_register_touch(&tp_cfg);
+    if (!*touch || esp_lv_adapter_start() != ESP_OK) {
+        return NULL;
+    }
+    ESP_LOGI(TAG, "QSPI bands: %d rows, 2 x %d-byte DMA buffers", DRAW_BUF_LINES, LCD_CHUNK_BYTES);
     return disp;
 }
 
 static bool display_lock(int timeout_ms)
 {
-    /* The BSP takes 0 for an indefinite wait; muse passes -1 for that. */
-    return bsp_display_lock(timeout_ms < 0 ? 0 : timeout_ms);
+    return esp_lv_adapter_lock(timeout_ms) == ESP_OK;
+}
+
+static void send_brightness(void *pct)
+{
+    bsp_display_brightness_set(*(int *)pct);
 }
 
 static void set_brightness(int pct)
 {
-    bsp_display_brightness_set(pct);
+    /* Brightness commands share the pixel bus, including screen off/wake.
+     * Only send them between completed transfers, on lcd_send's core. */
+    muse_lcd_bands_run(send_brightness, &pct);
 }
 
 static esp_err_t audio_init(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t *mic)
@@ -157,7 +221,7 @@ static const muse_board_t s_board = {
     .init = init,
     .display_start = display_start,
     .display_lock = display_lock,
-    .display_unlock = bsp_display_unlock,
+    .display_unlock = esp_lv_adapter_unlock,
     .set_brightness = set_brightness,
     .audio_init = audio_init,
     .mic_slot = 0,              /* one ES8311 mic, on the left slot */
