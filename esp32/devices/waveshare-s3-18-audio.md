@@ -70,8 +70,10 @@ On 29 October 2026 the owner heard the local MP3 self-test clearly. The
 advertised no incoming audio command. It is superseded by this implementation.
 A full 16 MB backup was saved and the working screen/USB build
 `999.0.0-s3fix.c57b3a5-usb` was restored. All four write hashes verified and NVS
-was byte-identical before and after restoration. The device remains on that
-version while the owner compares Dutch transcription.
+was byte-identical before and after restoration. The owner supplied a new
+screenshot from that comparison: the app returned an answer and displayed an
+audio player, while transcription errors remained. A screenshot alone does not
+confirm that the audio plays or establish what words were actually spoken.
 
 The new candidate is `999.0.0-s3audio-test2`. Computer validation exercises the
 real registration builder, command validation and asynchronous completion,
@@ -80,9 +82,14 @@ ranges, captions, mute, BOOT interruption, missing files and stale streams.
 ESP-IDF 6.0.1 builds passed for S3 1.8 with audio commands enabled and
 S3 2.16 with them disabled. The candidate app is 2,166,784 bytes, leaving
 48% of its 4 MiB slot free. The full host suite ran 855 tests: 851 passed
-and four optional dependency checks were skipped. Hardware registration,
-an actual Muse-generated spoken message and Dutch transcription
-still require acceptance on the first board. A local MP3 test alone does not
+and four optional dependency checks were skipped.
+
+The candidate was then installed on the first board after another full 16 MB
+backup. All four writes verified, NVS was unchanged, and USB status confirmed
+`999.0.0-s3audio-test2`, Wi-Fi connected and Muse online. Speaker, volume,
+microphone gain and screen settings were preserved. An actual Muse-generated
+spoken message, advertised-command use and Dutch transcription still require
+acceptance on the first board. A local MP3 test alone does not
 prove the complete Muse-to-speaker route.
 
 Personal firmware, credentials, backups and raw conversation logs stay local.
