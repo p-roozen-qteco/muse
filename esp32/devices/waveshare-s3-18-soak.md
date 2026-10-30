@@ -97,3 +97,32 @@ en schermslaap afzonderlijk te meten, niet als resultaat van deze nieuwe test.
 De huidige schermslaap is bovendien nog geen bevestigde zuinige stand-by:
 voor deze boardport zijn displaypauze en CPU-slaap niet met deze wijziging
 uitgebreid. We rapporteren wat de bestaande firmware werkelijk doet.
+
+## Vastgelegde resultaten, 30 oktober 2026
+
+- Op test1 bleef het volledige verzorgingsrecord bytegetrouw behouden na een
+  normale herstart. De opgeslagen waarden bij die eerste proef waren buik 99,
+  energie 79, plezier 87, vijf verzorgingsacties en zes bandpunten.
+- Vóór installatie van test2 is de recentste voortgang opnieuw gelezen: buik
+  99, energie 78, plezier 86, rust uit, speels-vlag aan, bonus 0, record 0,
+  bandpunten 6, verzorgingsacties 5 en 34 minuten. Het kleine verschil met de
+  eerdere proef komt door het normale tijdsverloop op het ingeschakelde bord.
+- Na installatie én een daaropvolgende normale herstart laadt test2 alle tien
+  waarden exact terug. Alle geschreven NVS-records zijn ongewijzigd. Beide
+  opstartcontroles bereiken `starting` zonder crashmeldingen; Muse/Link komen
+  online en bestaande geluids- en scherminstellingen blijven gelijk.
+- **928 hosttests: 924 geslaagd, 4 bestaande skips.** Daarnaast slagen alle
+  **13 simulator-CTestcontroles**, inclusief de uitgebreidere aanrakingstests.
+  Beide S3-builds slagen met ESP-IDF 6.0.1. De 368×448-indeling is visueel bekeken.
+- De eigenaar moet nog bevestigen dat de grotere knoppen op het echte scherm
+  makkelijker werken. De eerdere bevestiging van audio betreft test1; de
+  audio- en microfooncode is in test2 ongewijzigd.
+
+De USB-duurmeting is gestart op **30 oktober 2026 om 15:19:50 Nederlandse tijd**
+en eindigt na 24 uur op **31 oktober om 15:19:50**. Een onafhankelijke
+opvolgcontrole beoordeelt de rapporten elk uur. Alleen nieuwe bevindingen of
+voltooiing worden gemeld. Automatische sluimering van de Mac wordt tijdelijk
+voorkomen tot het einde van de meetperiode; de Mac en Codex moeten beschikbaar
+blijven. Dit is de start van de duurtest, geen afgerond stabiliteitsresultaat.
+De vieruursproef op accu wacht op het afronden van de USB-fase en het fysiek
+loshalen van de kabel. De accucapaciteit is nog niet bevestigd.
