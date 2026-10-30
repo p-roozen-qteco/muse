@@ -16,6 +16,7 @@
 
 #include "sim_board.h"
 #include "sim_platform.h"
+#include "sdkconfig.h"
 #include <string.h>
 
 #include "src/drivers/sdl/lv_sdl_mouse.h"
@@ -96,6 +97,17 @@ static const muse_board_t s_sim_board = {
     .power_off = sim_power_off,
 };
 
+#if CONFIG_MUSE_PET
+/* Advertise audio capability for reply-layout preview only. No audio device
+ * is created and the simulator never records or plays sound. */
+static esp_err_t sim_audio_unavailable(esp_codec_dev_handle_t *spk, esp_codec_dev_handle_t *mic)
+{
+    *spk = NULL;
+    *mic = NULL;
+    return ESP_FAIL;
+}
+#endif
+
 const muse_board_t *sim_board_get(void)
 {
     if (s_s3_18) {
@@ -106,6 +118,9 @@ const muse_board_t *sim_board_get(void)
         board.height = 448;
         board.round = false;
         board.diagonal_in = 1.8f;
+#if CONFIG_MUSE_PET
+        board.audio_init = sim_audio_unavailable;
+#endif
         board.talk_button = "boot";
         board.aux_button = "pwr";
         board.talk_hint = (muse_button_hint_t){0};

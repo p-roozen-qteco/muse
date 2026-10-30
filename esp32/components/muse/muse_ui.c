@@ -40,6 +40,9 @@
 #include "muse_mem.h"
 #include "muse_menu.h"
 #include "muse_companion.h"
+#if CONFIG_MUSE_PET
+#include "muse_pet_ui.h"
+#endif
 #include "muse_pixel.h"
 #include "muse_settings.h"
 #include "muse_settings_ui.h"
@@ -55,6 +58,7 @@
 #endif
 
 static const char *TAG = "muse_ui";
+static bool s_pet_layout;
 
 #define METER_SEGS 14
 #define METER_SEG_PX 9
@@ -312,6 +316,12 @@ static void muse_image_init(void)
     lv_image_decoder_set_close_cb(dec, muse_dec_close);
     dec->name = "muse";
 
+#if CONFIG_MUSE_SOFT_AVATAR
+    /* Smooth interpolation changes pixels between the old 64x64 sample
+     * points. Invalidate the bounded avatar rectangle, not sampled cells. */
+    return;
+#endif
+
     s_cells = heap_caps_malloc(MUSE_PX_W * MUSE_PX_H * sizeof(uint16_t), MUSE_BIG_CAPS);
     s_cell_row = heap_caps_malloc(MUSE_PIXEL_MAX_PX * sizeof(uint16_t), MUSE_BIG_CAPS);
     if (!s_cells || !s_cell_row) {
@@ -521,6 +531,10 @@ static void on_canvas_touch(lv_event_t *e)
         muse_companion_release(&s_companion, now);
     } else if (code == LV_EVENT_CLICKED) {
         muse_companion_tap(&s_companion, now);
+#if CONFIG_MUSE_PET
+        if(s_pet_layout && s_companion.attention_until>now)
+            muse_pet_ui_pat((uint64_t)esp_timer_get_time()/1000);
+#endif
     } else if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING) {
         lv_indev_t *indev = lv_event_get_indev(e);
         if (!indev) return;
@@ -562,6 +576,18 @@ LV_FONT_DECLARE(muse_font_cjk_16)
  * falls back to Unifont's 16x16 CJK, the same cell, for what unscii lacks. */
 static const lv_font_t *caption_font(void)
 {
+    if (s_pet_layout) {
+#if CONFIG_MUSE_CJK_FONT
+        static lv_font_t soft_font;
+        if (!soft_font.get_glyph_dsc) {
+            soft_font = lv_font_montserrat_16;
+            soft_font.fallback = &CJK_FONT;
+        }
+        return &soft_font;
+#else
+        return &lv_font_montserrat_16;
+#endif
+    }
 #if CONFIG_MUSE_CJK_FONT
     static lv_font_t font;
     if (!font.get_glyph_dsc) {
@@ -856,6 +882,33 @@ static void build_answer(lv_obj_t *face, int ring_in)
             set_reply_box(l, c, n, top, cw, pitch);
         }
     }
+    if (s_pet_layout) {
+        /* The soft avatar fills its square; the pixel avatar's blank bottom
+         * rows cannot be subtracted. Reserve separate art and text regions.
+         * Page conservatively with the widest Latin glyph (plus CJK fallback)
+         * so proportional text never gains an unexpected wrapped line. */
+        int widest = cw;
+        for (unsigned ch = 32; ch < 256; ++ch) {
+            int width = lv_font_get_glyph_width(font, ch, ' ');
+            if (width > widest) widest = width;
+        }
+#if CONFIG_MUSE_CJK_FONT
+        if (widest < 16) widest = 16;
+#endif
+        int cols = (s_w - 36) / widest;
+        l = &s_answers[ANSWER_HEARD];
+        l->px = 232;
+        l->y = -35;
+        l->align = LV_TEXT_ALIGN_CENTER;
+        set_reply_box(l, cols, 3, 330 - s_h / 2, widest, pitch);
+        l = &s_answers[ANSWER_READ];
+        l->px = 144;
+        l->y = 124 - s_h / 2;
+        l->align = LV_TEXT_ALIGN_LEFT;
+        int lines = (s_h - 28 - 212 + CAPTION_LINE_SPACE) / pitch;
+        while ((cols + 1) * lines > MUSE_CAPTION_MAX * 2 / 3) --lines;
+        set_reply_box(l, cols, lines, 212 - s_h / 2, widest, pitch);
+    }
     ESP_LOGI(TAG, "reply pages: %d x %d heard, %d x %d read", s_answers[ANSWER_HEARD].cols,
              s_answers[ANSWER_HEARD].lines, l->cols, l->lines);
 
@@ -943,7 +996,7 @@ static void build_screen(void)
         face = s_face;
     }
 
-    if (!s_small && muse_board->no_ring) {
+    if (!s_small && (muse_board->no_ring || s_pet_layout)) {
         /* A square panel: progress along the bottom edge, as the compact
          * layout has it, rather than a circle around Muse. */
         s_bar = lv_obj_create(face);
@@ -976,7 +1029,7 @@ static void build_screen(void)
      * whose blank bottom rows can tuck in behind the meter.
      */
     int ring_in = (s_w < s_h ? s_w : s_h) / 2 - 10;   /* the ring's inner edge */
-    int cap_h = 2 * lv_font_get_line_height(&lv_font_unscii_16) + CAPTION_LINE_SPACE;
+    int cap_h = 2 * lv_font_get_line_height(caption_font()) + CAPTION_LINE_SPACE;
     int cap_bottom = 179;                              /* a 466 px circle's; fine for rectangles */
     if (muse_board->round) {
         cap_bottom = (int)sqrtf((float)(ring_in * ring_in - CAPTION_W * CAPTION_W / 4)) - 3;
@@ -985,6 +1038,7 @@ static void build_screen(void)
     int meter_y = cap_top - 6 - METER_SEG_PX / 2;
     int art_bottom = meter_y - METER_SEG_PX / 2 - 4;
     s_big_y = s_small ? 0 : art_bottom - (s_canvas_px / 2 - ART_BLANK_ROWS * (s_canvas_px / MUSE_PX_W));
+    if(s_pet_layout) s_big_y=-18;
 
     /* The character. */
     muse_image_init();
@@ -1015,13 +1069,18 @@ static void build_screen(void)
     lv_obj_align(status, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 40 : s_small ? 1 : 20 + s_dy);
     s_wifi_icon = make_label(status, &lv_font_montserrat_14, COLOR_DIM);
     s_ble_icon = make_label(status, &lv_font_montserrat_14, COLOR_DIM);
-    s_power_lbl = make_label(status, &lv_font_unscii_8, COLOR_DIM);
+    s_power_lbl = make_label(status, s_pet_layout ? &lv_font_montserrat_14 : &lv_font_unscii_8, COLOR_DIM);
 
     /* The compact layout leaves the state to the avatar and the caption,
      * unless the screen is tall enough to fit it in small type above Muse. */
     s_state_lbl = make_label(face, s_small ? &lv_font_unscii_8 : &lv_font_unscii_16, 0xffffff);
     lv_obj_set_style_text_letter_space(s_state_lbl, s_small ? 1 : 2, 0);
     lv_obj_align(s_state_lbl, LV_ALIGN_TOP_MID, 0, muse_board->rim_controls ? 64 : s_small ? 22 : 40 + s_dy);
+    if(s_pet_layout) {
+        lv_obj_set_style_text_font(s_state_lbl,&lv_font_montserrat_20,0);
+        lv_obj_set_style_text_letter_space(s_state_lbl,0,0);
+        lv_obj_align(s_state_lbl,LV_ALIGN_TOP_MID,0,44);
+    }
     lv_obj_set_flag(s_state_lbl, LV_OBJ_FLAG_HIDDEN, s_small && !s_tall && s_h < 200);
 
     /* This gadget's own name, dim under the state while it's unpaired: with
@@ -1091,6 +1150,9 @@ static void build_screen(void)
     }
 
     build_answer(face, ring_in);
+#if CONFIG_MUSE_PET
+    if(s_pet_layout) muse_pet_ui_build(face,s_w,s_h);
+#endif
 }
 
 
@@ -1398,6 +1460,9 @@ static void update_chrome(float now)
         int page = lv_tileview_get_tile_active(s_tv) == s_settings;
         bool subpage = muse_settings_ui_in_subpage();
         bool swipe = !page || !subpage;
+#if CONFIG_MUSE_PET
+        if(s_pet_layout && muse_pet_ui_game_open()) swipe=false;
+#endif
         if (swipe != lv_obj_has_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE)) {
             lv_obj_set_flag(s_tv, LV_OBJ_FLAG_SCROLLABLE, swipe);
         }
@@ -1553,6 +1618,10 @@ static void update_status(muse_mode_t mode, float now)
 {
     uint32_t accent = muse_pixel_accent(mode);
     const char *name = mode == MUSE_MODE_IDLE ? s_idle_name : MODE_NAMES[mode];
+#if CONFIG_MUSE_PET
+    if(s_pet_layout && mode==MUSE_MODE_IDLE && s_idle_name==MODE_NAMES[MUSE_MODE_IDLE])
+        name=muse_pet_ui_name();
+#endif
 #if CONFIG_MUSE_BOARD_M5STACK_STOPWATCH && CONFIG_MUSE_REALTIME_VOICE
     const char *call_name = muse_voice_call_label();
     const char *hint = muse_voice_call_hint();
@@ -1745,12 +1814,26 @@ static void frame_tick(lv_timer_t *timer)
         }
         s_last_mode = mode;
     }
+#if CONFIG_MUSE_PET
+    bool pet_game=false;
+    if(s_pet_layout) {
+        static char pet_caption[MUSE_CAPTION_MAX];
+        static uint32_t pet_caption_version;
+        (void)muse_state_caption(pet_caption,sizeof(pet_caption),&pet_caption_version);
+        bool visible=mode==MUSE_MODE_IDLE && !muse_state_asleep() && !s_image_dsc.data &&
+                     !muse_menu_is_open() && (!s_tv || lv_obj_get_scroll_x(s_tv)==0) && !pet_caption[0];
+        pet_game=muse_pet_ui_tick((uint64_t)esp_timer_get_time()/1000,visible);
+    }
+#endif
     if (update_sleep()) {
         companion_cancel();
         return;
     }
 #if CONFIG_MUSE_VIDEO
     if (muse_video_tick()) {
+#if CONFIG_MUSE_PET
+        if(s_pet_layout) muse_pet_ui_hide();
+#endif
         companion_cancel();
         muse_menu_close();
         return;   /* video covers everything */
@@ -1773,6 +1856,10 @@ static void frame_tick(lv_timer_t *timer)
         return;
     }
 
+#if CONFIG_MUSE_PET
+    if(pet_game) {update_power(now);return;}
+#endif
+
     /* Fast attack, slow release keeps the mouth and meter lively but readable. */
     float level = muse_state_level();
     /* The voice task can switch sources after this frame read its mode. */
@@ -1790,6 +1877,9 @@ static void frame_tick(lv_timer_t *timer)
 #if CONFIG_MUSE_COMPANION_TOUCH
     muse_companion_pose(&s_companion, &pose);
 #endif
+#if CONFIG_MUSE_PET
+    if(s_pet_layout) muse_pet_ui_pose(&pose);
+#endif
     if (!muse_board->epaper || mode != s_last_epaper_pose) {
         muse_pixel_render(&pose);
         invalidate_muse();
@@ -1803,6 +1893,9 @@ esp_err_t muse_ui_start(void)
 {
     s_w = muse_board->width;
     s_h = muse_board->height;
+#if CONFIG_MUSE_PET
+    s_pet_layout=!muse_board->round && s_w>=320 && s_h>=400;
+#endif
     /* The full layout assumes room for the 466 px board's header and bottom
      * captions. Short landscape panels (BOX-3) need the compact layout too,
      * as does anything narrower than its fixed 256 px captions. */
@@ -1819,6 +1912,7 @@ esp_err_t muse_ui_start(void)
     if (muse_board->avatar_px > 0) {
         s_canvas_px = muse_board->avatar_px;
     }
+    if(s_pet_layout) s_canvas_px=288;
     if (s_canvas_px > s_w) {
         s_canvas_px = s_w / MUSE_PX_W * MUSE_PX_W;
     }
@@ -1856,6 +1950,9 @@ esp_err_t muse_ui_start(void)
 
 void muse_ui_show_face(void)
 {
+#if CONFIG_MUSE_PET
+    if(s_pet_layout) muse_pet_ui_hide();
+#endif
     if (!s_tv) {
         return;
     }

@@ -41,6 +41,7 @@ typedef struct {
     float attention; /* 0..1 touch gaze blend; zero preserves custom avatars */
     float gaze_x, gaze_y; /* -1..1 touch position */
     float wink;      /* 0..1 right eye closure, idle only */
+    unsigned pet_mood; /* muse_pet_mood_t, idle only; zero is content */
 } muse_pose_t;
 
 /* Accent colour of a mode (for the surrounding UI), as 0xRRGGBB. */

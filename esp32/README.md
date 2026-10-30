@@ -287,6 +287,10 @@ transcribes it and answers in writing, and boards with a screen show the
 answer as captions (Voice PE and reSpeaker Lite replies show up in the Muse app).
 The S3 1.8 test profile also advertises commands for playing an MP3 supplied by
 Muse, with optional text captions; see the [audio-message guide](devices/waveshare-s3-18-audio.md).
+
+The Waveshare AMOLED 1.8 also has a [soft Tamagotchi interface](devices/waveshare-s3-18-tamagotchi.md)
+with saved moods, local care and a star-tapping game. BOOT speech and automatic
+audio/text replies keep priority over these activities.
 Two things you can change:
 
 - **Shorter answers.** Ask for them in the message itself, such as "Answer in
