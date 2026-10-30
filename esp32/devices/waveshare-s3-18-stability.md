@@ -75,7 +75,15 @@ audio2 application and the candidate partition table. It is stored privately
 alongside its SHA-256, with the NVS region extracted for comparison.
 
 Physical checks and owner acceptance are recorded separately from the host
-tests. A 48-hour run, battery cold starts, repeated Wi-Fi loss/recovery and
+tests. The candidate was installed on the identified board on 30 October:
+all four flash writes verified and NVS was byte-identical before and after.
+After the USB watchdog restart the board returned six status responses,
+reported the new version, Wi-Fi connected and Muse connected. Volume 100,
+speaker enabled, microphone gain 30 dB, brightness 50 and sleep setting 0
+were unchanged. No panic markers appeared during the short observation.
+This does not yet constitute owner acceptance of the screen and sound.
+
+A 48-hour run, battery cold starts, repeated Wi-Fi loss/recovery and
 controlled Dutch speech comparisons remain necessary before calling this a
 long-term stable release. The earlier black-screen cause is still unconfirmed.
 
