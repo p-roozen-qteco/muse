@@ -29,6 +29,10 @@ typedef uint32_t TickType_t;
 typedef void *TaskHandle_t;
 typedef struct fake_queue *QueueHandle_t;
 typedef struct fake_stream *StreamBufferHandle_t;
+typedef int portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED 0
+#define portENTER_CRITICAL(lock) ((void)(lock))
+#define portEXIT_CRITICAL(lock) ((void)(lock))
 
 #define pdTRUE 1
 #define pdFALSE 0

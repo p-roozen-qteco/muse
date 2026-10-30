@@ -21,6 +21,7 @@ extern "C" {
 #endif
 QueueHandle_t xQueueCreateWithCaps(size_t length, size_t item, uint32_t caps);
 QueueHandle_t xQueueCreate(size_t length, size_t item);
+void vQueueDeleteWithCaps(QueueHandle_t q);
 BaseType_t xQueueSend(QueueHandle_t q, const void *item, TickType_t wait);
 BaseType_t xQueueReceive(QueueHandle_t q, void *item, TickType_t wait);
 #ifdef __cplusplus

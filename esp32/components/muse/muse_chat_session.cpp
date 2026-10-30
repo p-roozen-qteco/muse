@@ -168,6 +168,12 @@ static QueueHandle_t s_cmds, s_events;
 static StreamBufferHandle_t s_in, s_out;
 static std::atomic<uint32_t> s_gen{0};
 static std::atomic<bool> s_resting{false};
+static std::atomic<bool> s_started{false}, s_starting{false};
+static std::atomic<uint32_t> s_end_gen{0};
+/* Captions may be dropped, but delivery and completion must survive a full
+ * caption queue. Only these small records are copied with interrupts masked. */
+static portMUX_TYPE s_event_lock = portMUX_INITIALIZER_UNLOCKED;
+static ev_t s_sent_event, s_terminal_event;
 
 /* ---- Connection ---- */
 
@@ -327,6 +333,27 @@ static void *json_alloc(size_t n)
 
 /* ---- Events to the voice task ---- */
 
+static void publish_critical(const ev_t &ev)
+{
+    portENTER_CRITICAL(&s_event_lock);
+    if (ev.gen == s_gen.load()) {
+        if (ev.type == MUSE_HATCH_EV_SENT) s_sent_event = ev;
+        else s_terminal_event = ev;
+    }
+    portEXIT_CRITICAL(&s_event_lock);
+}
+
+static bool take_critical(bool sent, ev_t *ev)
+{
+    portENTER_CRITICAL(&s_event_lock);
+    ev_t &slot = sent ? s_sent_event : s_terminal_event;
+    bool have = slot.type != MUSE_HATCH_EV_NONE && slot.gen == s_gen.load();
+    if (have) *ev = slot;
+    slot = {};
+    portEXIT_CRITICAL(&s_event_lock);
+    return have;
+}
+
 static void emit(muse_hatch_ev_t type, const char *text)
 {
     if (s_turn.text) {
@@ -340,11 +367,11 @@ static void emit(muse_hatch_ev_t type, const char *text)
     } else if (text) {
         strlcpy(ev.text, text, sizeof(ev.text));
     }
-    /* Captions are lossy; the end of a turn, and whether the note got there, must get through. */
-    TickType_t wait = (type == MUSE_HATCH_EV_DONE || type == MUSE_HATCH_EV_ERROR || type == MUSE_HATCH_EV_SENT)
-                          ? pdMS_TO_TICKS(200)
-                          : 0;
-    xQueueSend(s_events, &ev, wait);
+    if (type == MUSE_HATCH_EV_DONE || type == MUSE_HATCH_EV_ERROR || type == MUSE_HATCH_EV_SENT) {
+        publish_critical(ev);
+    } else {
+        xQueueSend(s_events, &ev, 0);   /* captions are lossy */
+    }
 }
 
 /* ---- TLS / WebSocket (from hatch-link's noise_control.cpp) ---- */
@@ -2195,9 +2222,22 @@ static void handle(const cmd_t &cmd)
     }
 }
 
+/* End/cancel are state, not just queue edges: a full command queue cannot
+ * leave the microphone upload open or keep a cancelled turn alive. */
+static void apply_voice_requests(void)
+{
+    if (!s_turn.text && s_turn.phase != P_IDLE) {
+        if (s_turn.gen != s_gen.load()) turn_finish();
+        else if (s_turn.phase == P_LISTEN && s_end_gen.load() == s_turn.gen) s_turn.end_requested = true;
+    }
+}
+
 static void hatch_task(void *arg)
 {
     (void)arg;
+#if CONFIG_MUSE_REALTIME_VOICE
+    muse_voice_call_init();   /* once, after successful session-task creation */
+#endif
     for (;;) {
         cmd_t cmd;
         /* Resting, the socket's keepalive (PING_US) needs no quicker polls.
@@ -2215,6 +2255,7 @@ static void hatch_task(void *arg)
                 handle(cmd);
             }
         }
+        apply_voice_requests();
 #if CONFIG_MUSE_REALTIME_VOICE
         if (!muse_voice_call_poll()) {
             drop_connection("call send failed");
@@ -2282,39 +2323,60 @@ static void hatch_task(void *arg)
 
 /* ---- Public API ---- */
 
-static void post(cmd_type_t type, uint32_t gen)
+static bool post(cmd_type_t type, uint32_t gen)
 {
-    if (s_cmds) {
+    if (s_started.load()) {
         cmd_t cmd{ type, gen, nullptr };
-        xQueueSend(s_cmds, &cmd, pdMS_TO_TICKS(100));
+        return xQueueSend(s_cmds, &cmd, pdMS_TO_TICKS(100)) == pdTRUE;
     }
+    return false;
 }
 
 static void drain_out(void)
 {
+    if (!s_started.load()) return;
     static int16_t junk[256];
     while (xStreamBufferReceive(s_out, junk, sizeof(junk), 0)) {
     }
 }
 
-extern "C" void muse_hatch_start(void)
+/* No worker or public buffer user can run during a failed startup. All queue
+ * allocations use the Caps API so their matching delete works on both heaps. */
+static void start_cleanup(void)
 {
-    if (s_cmds) {
-        return;
+    if (s_cmds) vQueueDeleteWithCaps(s_cmds);
+    if (s_events) vQueueDeleteWithCaps(s_events);
+    if (s_in) vStreamBufferDeleteWithCaps(s_in);
+    if (s_out) vStreamBufferDeleteWithCaps(s_out);
+    s_cmds = s_events = nullptr;
+    s_in = s_out = nullptr;
+    free(s_turn.chunk);
+    free(s_turn.mp3);
+    free(s_turn.note);
+    free(s_turn.texts);
+    s_turn = {};
+    free(s_pcm);
+    free(s_pcm16);
+    s_pcm = s_pcm16 = nullptr;
+    for (auto &s : s_streams) {
+        free(s.line);
+        s = {};
     }
-    cJSON_Hooks hooks = { json_alloc, heap_caps_free };
-    cJSON_InitHooks(&hooks);
+}
+
+static bool start_attempt(void)
+{
     /* Keep the command/event queues out of internal DRAM, which Wi-Fi, BLE and
      * mbedTLS can exhaust: when the allocation failed here hatch_task never
      * started and every turn was silently dropped. Fall back to internal RAM
      * on parts without usable PSRAM. */
     s_cmds = xQueueCreateWithCaps(16, sizeof(cmd_t), MALLOC_CAP_SPIRAM);
     if (!s_cmds) {
-        s_cmds = xQueueCreate(16, sizeof(cmd_t));
+        s_cmds = xQueueCreateWithCaps(16, sizeof(cmd_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     s_events = xQueueCreateWithCaps(16, sizeof(ev_t), MALLOC_CAP_SPIRAM);
     if (!s_events) {
-        s_events = xQueueCreate(16, sizeof(ev_t));
+        s_events = xQueueCreateWithCaps(16, sizeof(ev_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
     s_in = xStreamBufferCreateWithCaps(IN_BYTES, 1, MALLOC_CAP_SPIRAM);
     s_out = xStreamBufferCreateWithCaps(OUT_BYTES, 1, MALLOC_CAP_SPIRAM);
@@ -2324,24 +2386,48 @@ extern "C" void muse_hatch_start(void)
     s_turn.texts = static_cast<char *>(psram_alloc(MAX_MSGS * TEXT_MAX));   /* captions just stay untimed without it */
     s_pcm = static_cast<int16_t *>(psram_alloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t)));
     s_pcm16 = static_cast<int16_t *>(psram_alloc((MINIMP3_MAX_SAMPLES_PER_FRAME + 8) * sizeof(int16_t)));
+    bool lines_ready = true;
     for (auto &s : s_streams) {
         s.line = static_cast<char *>(psram_alloc(NDJSON_LINE_MAX));
         s.cap = NDJSON_LINE_MAX;
+        lines_ready &= s.line != nullptr;
     }
     s_turn.tts_msg = -1;
-#if CONFIG_MUSE_REALTIME_VOICE
-    muse_voice_call_init();   /* calls stay unavailable if it fails; notes still work */
-#endif
     /* Stack in PSRAM: TLS, Noise and the MP3 decoder (~16 KB of scratch) all run here. */
-    if (!s_cmds || !s_events || !s_in || !s_out || !s_turn.chunk || !s_turn.mp3 || (VOICE_NOTE && !s_turn.note) || !s_pcm || !s_pcm16 ||
+    if (!lines_ready || !s_cmds || !s_events || !s_in || !s_out || !s_turn.chunk || !s_turn.mp3 || (VOICE_NOTE && !s_turn.note) || !s_pcm || !s_pcm16 ||
         xTaskCreatePinnedToCoreWithCaps(hatch_task, "muse_chat", 48 * 1024, nullptr, 5, nullptr, 0,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
-        ESP_LOGE(TAG, "start failed");
+        start_cleanup();
+        return false;
     }
+    s_started.store(true);
+    return true;
+}
+
+extern "C" void muse_hatch_start(void)
+{
+    if (s_started.load() || s_starting.exchange(true)) return;
+    /* Another caller may have completed startup before we acquired the guard. */
+    if (!s_started.load()) {
+        static bool hooks_set;
+        if (!hooks_set) {
+            cJSON_Hooks hooks = { json_alloc, heap_caps_free };
+            cJSON_InitHooks(&hooks);
+            hooks_set = true;
+        }
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (start_attempt()) break;
+            ESP_LOGE(TAG, "chat start failed (attempt %d/3)", attempt + 1);
+            if (attempt < 2) vTaskDelay(pdMS_TO_TICKS(250));
+        }
+        if (!s_started.load()) muse_hatch_report(MUSE_HATCH_UNREACHABLE, "CHAT START FAILED - RETRY");
+    }
+    s_starting.store(false);
 }
 
 extern "C" void muse_hatch_chat_connect(void)
 {
+    muse_hatch_start();   /* also allows retry after all startup attempts failed */
     post(CMD_CONNECT, 0);
 }
 
@@ -2352,13 +2438,13 @@ extern "C" void muse_hatch_chat_forget(void)
 
 extern "C" bool muse_hatch_ready(void)
 {
-    return s_cmds && muse_hatch_configured() && muse_wifi_connected();
+    return s_started.load() && muse_hatch_configured() && muse_wifi_connected();
 }
 
 #if CONFIG_MUSE_AUDIO_COMMANDS
 extern "C" bool muse_hatch_audio_message_begin(const muse_audio_message_t *request)
 {
-    if (!s_cmds || !muse_hatch_ready()) return false;
+    if (!muse_hatch_ready()) return false;
     auto *copy = static_cast<muse_audio_message_t *>(heap_caps_malloc(sizeof(*request), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!copy) return false;
     *copy = *request;
@@ -2372,14 +2458,19 @@ extern "C" bool muse_hatch_audio_message_begin(const muse_audio_message_t *reque
 
 extern "C" void muse_hatch_turn_begin(void)
 {
+    if (!s_started.load()) return;
     uint32_t gen = ++s_gen;
     xStreamBufferReset(s_in);
     drain_out();
-    post(CMD_BEGIN, gen);
+    if (!post(CMD_BEGIN, gen)) {
+        ev_t ev{ MUSE_HATCH_EV_ERROR, gen, "MUSE BUSY - TRY AGAIN" };
+        publish_critical(ev);
+    }
 }
 
 extern "C" void muse_hatch_turn_audio(const int16_t *pcm, size_t frames)
 {
+    if (!s_started.load()) return;
     size_t bytes = frames * sizeof(int16_t);
     if (xStreamBufferSend(s_in, pcm, bytes, 0) != bytes) {
         ESP_LOGW(TAG, "mic backlog full, dropped audio");
@@ -2389,11 +2480,13 @@ extern "C" void muse_hatch_turn_audio(const int16_t *pcm, size_t frames)
 /* Both ends move whole frames, so the buffer never splits one. */
 extern "C" size_t muse_hatch_turn_audio_wait(const int16_t *pcm, size_t frames, int wait_ms)
 {
+    if (!s_started.load()) return 0;
     return xStreamBufferSend(s_in, pcm, frames * sizeof(int16_t), pdMS_TO_TICKS(wait_ms)) / sizeof(int16_t);
 }
 
 extern "C" void muse_hatch_turn_end(void)
 {
+    s_end_gen.store(s_gen.load());
     post(CMD_END, s_gen.load());
 }
 
@@ -2458,7 +2551,7 @@ extern "C" void muse_session_call_wake(void)
 extern "C" void muse_hatch_text_turn(char *text)
 {
     cmd_t cmd{ CMD_TEXT, 0, text };
-    if (!s_cmds || !muse_hatch_configured()) {
+    if (!s_started.load() || !muse_hatch_configured()) {
         muse_hatch_console("error", "MUSE NOT SET UP", nullptr);
         free(text);
     } else if (xQueueSend(s_cmds, &cmd, pdMS_TO_TICKS(1000)) != pdTRUE) {
@@ -2474,7 +2567,18 @@ extern "C" void muse_hatch_text_cancel(void)
 
 extern "C" muse_hatch_ev_t muse_hatch_turn_event(char *text, size_t cap)
 {
+    if (!s_started.load()) return MUSE_HATCH_EV_NONE;
     ev_t ev;
+    if (take_critical(true, &ev)) {
+        strlcpy(text, ev.text, cap);
+        return ev.type;
+    }
+    /* Prefer completion to captions too: a continuous caption producer must
+     * not starve the end/error while the voice task drains its audio buffer. */
+    if (take_critical(false, &ev)) {
+        strlcpy(text, ev.text, cap);
+        return ev.type;
+    }
     while (xQueueReceive(s_events, &ev, 0) == pdTRUE) {
         if (ev.gen == s_gen.load()) {
             strlcpy(text, ev.text, cap);
@@ -2486,6 +2590,7 @@ extern "C" muse_hatch_ev_t muse_hatch_turn_event(char *text, size_t cap)
 
 extern "C" bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
 {
+    if (!s_started.load()) return false;
     /* The message being spoken: the last one whose speech has started. */
     const msg_t *m = nullptr;
     const char *text = nullptr;
@@ -2517,6 +2622,7 @@ extern "C" bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
 
 extern "C" size_t muse_hatch_turn_read(int16_t *pcm, size_t frames, int wait_ms)
 {
+    if (!s_started.load()) return 0;
     return xStreamBufferReceive(s_out, pcm, frames * sizeof(int16_t), pdMS_TO_TICKS(wait_ms)) / sizeof(int16_t);
 }
 

@@ -71,6 +71,7 @@ static const char *TAG = "muse_voice";
 #define RETRY_MAX_US (120LL * 1000000)
 #define STALL_US (30LL * 1000000)               /* Hatch took none of a note this long: give up */
 #define ACK_WAIT_US (30LL * 1000000)            /* asleep, waiting for the VM to have a note */
+#define REPLY_WAIT_MAX_US (210LL * 1000000)    /* session's 180 s cap + transport/drain margin */
 
 static QueueHandle_t s_queue;
 static uint32_t s_press_input_epoch;
@@ -327,8 +328,8 @@ static void take(rec_stats_t *st, const int16_t *pcm)
  * Records speech until release or MAX_SECS, starting with the pre-roll; *held
  * gets the part after the press. It streams to Hatch as it goes if it can.
  * If not, the note is kept in s_rec to send later, and streams from partway
- * if Hatch comes within reach. Returns false if Hatch failed the turn with no
- * kept note to fall back on (why says what failed). There is no start chirp:
+ * if Hatch comes within reach. Returns false on capture failure, or if Hatch
+ * failed with no kept note to fall back on (why says what failed). There is no start chirp:
  * anything played now would land on top of the first words.
  */
 static bool record(bool barge_in, size_t *held, char *why, size_t cap)
@@ -342,6 +343,7 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     }
     muse_state_set_caption(s_live ? "LISTENING..." : "RECORDING...");
     bool heard = false, ok = true;
+    bool capture_failed = false;
     bool gave_up = false;   /* Hatch failed this note: it's kept, and goes later */
     char text[96];
     rec_stats_t st = { 0 };
@@ -350,7 +352,10 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     if (barge_in) {
         /* Pressed during playback: the queued tail of the reply is still sounding. */
         for (int i = 0; i < SETTLE_CHUNKS; i++) {
-            muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK);
+            if (muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
+                capture_failed = true;
+                break;
+            }
         }
     } else {
         for (size_t i = 0; i < s_pre_fill; i++) {
@@ -362,8 +367,9 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     size_t pre = n;
     bool released = false;
     size_t stop_at = MAX_FRAMES;
-    while (n + MUSE_AUDIO_CHUNK <= stop_at) {
+    while (!capture_failed && n + MUSE_AUDIO_CHUNK <= stop_at) {
         if (muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
+            capture_failed = true;
             break;
         }
         muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
@@ -408,6 +414,13 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     }
     muse_state_set_level(0);
     *held = n - pre;
+    if (capture_failed) {
+        ESP_LOGW(TAG, "microphone read failed; discarding incomplete note");
+        if (s_live) muse_hatch_turn_cancel();
+        s_live = false;
+        ok = false;
+        strlcpy(why, "MICROPHONE ERROR - TRY AGAIN", cap);
+    }
 
     char tail[160];
     int tl = 0;
@@ -418,7 +431,7 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
     ESP_LOGI(TAG, "end levels:%s", tail);
     float rms_db = st.frames ? 10.0f * log10f((float)(st.acc / st.frames / (32768.0 * 32768.0)) + 1e-10f) : -100.0f;
     ESP_LOGI(TAG, "recorded %.2fs%s: rms %.1f dBFS, peak %.1f dBFS, floor %.1f dBFS, %d clipped, gain %d dB",
-             (double)n / MUSE_AUDIO_RATE, released ? "" : " (max)", rms_db < -100.0f ? -100.0f : rms_db,
+             (double)n / MUSE_AUDIO_RATE, capture_failed ? " (capture failed)" : released ? "" : " (max)", rms_db < -100.0f ? -100.0f : rms_db,
              20.0 * log10((st.peak + 1) / 32768.0), st.floor_db, st.clipped, muse_settings_mic_gain());
     return ok;
 }
@@ -443,8 +456,20 @@ static bool hatch_reply(bool *delivered, muse_audio_message_result_t *remote)
     int64_t t0 = esp_timer_get_time();
     *delivered = false;
     for (;;) {
+        /* The network task has its own deadlines. This independent backstop
+         * also covers a lost command or a stalled worker; never hold the audio
+         * job/busy flag forever when no terminal event can reach us. */
+        if (esp_timer_get_time() - t0 >= REPLY_WAIT_MAX_US) {
+            const char *why = "MUSE REPLY TIMED OUT";
+            if (remote) strlcpy(remote->error, why, sizeof(remote->error));
+            muse_hatch_turn_cancel();
+            muse_state_set_level(0);
+            go_idle(why);
+            return false;
+        }
         muse_hatch_ev_t ev;
-        while ((ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE) {
+        for (int events = 0; events < 32 &&
+             (ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE; ++events) {
             switch (ev) {
             case MUSE_HATCH_EV_HEARD:
                 if (!speaking && !replied) {
@@ -1301,6 +1326,14 @@ static void voice_task(void *arg)
         char why[96];
         bool ok = record(pending_down, &held, why, sizeof(why));
         pending_down = false;
+        if (!ok) {
+            /* A partial capture must neither upload as a complete note nor
+             * enter the retry queue, even when it exceeds the minimum hold. */
+            drop_rec();
+            pre_reset();
+            go_idle(why);
+            continue;
+        }
         if (held < MIN_HELD_FRAMES && !wake) {
             muse_hatch_turn_cancel();
             drop_rec();
@@ -1314,11 +1347,6 @@ static void voice_task(void *arg)
             }
 #endif
             go_idle("HOLD LONGER TO TALK");
-            continue;
-        }
-        if (!ok) {
-            pre_reset();
-            go_idle(why);   /* Hatch failed it while recording */
             continue;
         }
         pending_down = finish_note();
