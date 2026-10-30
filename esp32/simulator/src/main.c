@@ -57,7 +57,7 @@ static void usage(FILE *out, const char *argv0)
 {
     fprintf(out,
             "Usage: %s [--headless] [--scenario FILE] [--run-ms N] "
-            "[--screenshot FILE.ppm]\n"
+            "[--screenshot FILE.ppm] [--board watcher|s3-18]\n"
             "\n"
             "Scenario lines are key=value. Supported keys:\n"
             "  face=boot|idle|listening|thinking|speaking|error|off|happy\n"
@@ -68,6 +68,7 @@ static void usage(FILE *out, const char *argv0)
             "  ble=off|advertising|connected         passkey=0..999999\n"
             "  paired=true|false  link=boot|unpaired|pairing|confirm|connecting|online|offline|error\n"
             "  speaker=true|false brightness=10..100 advance=MILLISECONDS\n"
+            "  touch=down|move|up,X,Y (screen pixels; advance between events)\n"
             "\n"
             "Interactive keys: F1..F7 select face states, H is happy, Space is\n"
             "push-to-talk, +/- change level, [/] change progress, S sleeps,\n"
@@ -289,8 +290,37 @@ static bool set_link(const char *value)
     return false;
 }
 
+/* Scripted input goes through SDL and LVGL's real hit testing/gesture path. */
+static bool touch_event(const char *value)
+{
+    char action[8], extra;
+    int x, y;
+    if (sscanf(value, "%7[^,],%d,%d%c", action, &x, &y, &extra) != 3 ||
+        x < 0 || y < 0 || x >= lv_display_get_horizontal_resolution(sim_board_display()) ||
+        y >= lv_display_get_vertical_resolution(sim_board_display())) return false;
+    SDL_Event e = {0};
+    uint32_t id = SDL_GetWindowID(lv_sdl_window_get_window(sim_board_display()));
+    if (!strcmp(action, "move")) {
+        e.type = SDL_MOUSEMOTION;
+        e.motion.windowID = id; e.motion.x = x; e.motion.y = y;
+        e.motion.state = SDL_BUTTON_LMASK;
+    } else {
+        if (strcmp(action, "down") && strcmp(action, "up")) return false;
+        e.type = !strcmp(action, "down") ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+        e.button.windowID = id; e.button.x = x; e.button.y = y;
+        e.button.button = SDL_BUTTON_LEFT;
+        e.button.state = e.type == SDL_MOUSEBUTTONDOWN ? SDL_PRESSED : SDL_RELEASED;
+    }
+    return SDL_PushEvent(&e) == 1;
+}
+
 static bool apply_setting(const char *key, const char *value, bool real_time)
 {
+    if (!strcmp(key, "touch")) return touch_event(value);
+    if (!strcmp(key, "page") && (!strcmp(value, "face") || !strcmp(value, "settings"))) {
+        muse_ui_bench_page(!strcmp(value, "settings"));
+        return true;
+    }
     bool flag;
     long number;
     float scalar;
@@ -476,6 +506,11 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless")) {
             headless = true;
+        } else if (!strcmp(argv[i], "--board") && i + 1 < argc) {
+            if (!sim_board_select(argv[++i])) {
+                fprintf(stderr, "invalid --board value\n");
+                return 2;
+            }
         } else if (!strcmp(argv[i], "--scenario") && i + 1 < argc) {
             scenario = argv[++i];
         } else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) {

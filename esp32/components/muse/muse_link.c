@@ -63,6 +63,11 @@ const char *muse_link_state_name(muse_link_state_t state)
     return "";
 }
 
+const char *muse_link_node_id(void)
+{
+    return s_ops && s_ops->node_id ? s_ops->node_id() : NULL;
+}
+
 bool muse_link_hatch_linked(void)
 {
     return s_ops && s_ops->hatch_linked && s_ops->hatch_linked();

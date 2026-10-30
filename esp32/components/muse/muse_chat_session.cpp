@@ -242,6 +242,7 @@ struct turn_t {
     uint32_t gen;
     bool text;               /* typed at the console: the reply goes there, unspoken */
     bool spoken;             /* freeze reply modality when this voice note starts */
+    bool auto_audio;         /* delivery preference; never changes the recorded PCM */
     int audio_source;        /* zero: normal chat; otherwise an explicit audio command */
     char audio_target[512];
     size_t audio_offset, audio_chunk_bytes;
@@ -1074,6 +1075,9 @@ static bool turn_start(uint32_t gen, bool text)
 #if CONFIG_MUSE_SPOKEN_REPLIES
     s_turn.spoken = !text && muse_settings_speaker_on();
 #endif
+#if CONFIG_MUSE_AUTO_AUDIO_REPLIES
+    s_turn.auto_audio = !text && muse_settings_speaker_on() && muse_settings_volume() > 0;
+#endif
     s_turn.tts_msg = -1;
     memset(s_marks, 0, sizeof(s_marks));
     s_reply_shown[0] = '\0';
@@ -1193,6 +1197,13 @@ static bool open_note(void)
         return false;
     }
     const char *head = s_turn.spoken ? MUSE_HATCH_NOTE_HEAD_VOICE : MUSE_HATCH_NOTE_HEAD;
+#if CONFIG_MUSE_AUTO_AUDIO_REPLIES
+    if (s_turn.auto_audio && muse_settings_speaker_on() && muse_settings_volume() > 0 &&
+        muse_hatch_auto_note_head(reinterpret_cast<char *>(s_turn.chunk), DICT_CHUNK_BYTES,
+                                  muse_link_node_id())) {
+        head = reinterpret_cast<const char *>(s_turn.chunk);
+    }
+#endif
     s_turn.body_sent = strlen(head);
     if (!send_body(s_turn.chat_id, reinterpret_cast<const uint8_t *>(head), strlen(head), false)) {
         return false;

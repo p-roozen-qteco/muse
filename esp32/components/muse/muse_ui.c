@@ -39,6 +39,7 @@
 #include "muse_link.h"
 #include "muse_mem.h"
 #include "muse_menu.h"
+#include "muse_companion.h"
 #include "muse_pixel.h"
 #include "muse_settings.h"
 #include "muse_settings_ui.h"
@@ -500,11 +501,49 @@ static void build_button_icons(lv_obj_t *face)
     lv_obj_align(s_aux_icon, a->align, a->x, a->y);
 }
 
+#if CONFIG_MUSE_COMPANION_TOUCH
+static muse_companion_t s_companion;
+#define companion_cancel() muse_companion_cancel(&s_companion)
+
+static void on_canvas_touch(lv_event_t *e)
+{
+    if (muse_state_mode(NULL) != MUSE_MODE_IDLE || muse_state_asleep() ||
+        s_image_dsc.data || muse_menu_is_open() ||
+        (s_tv && lv_obj_get_scroll_x(s_tv) != 0)) {
+        companion_cancel();
+        return;
+    }
+    lv_event_code_t code = lv_event_get_code(e);
+    float now = (float)esp_timer_get_time() / 1e6f;
+    if (code == LV_EVENT_PRESS_LOST || code == LV_EVENT_SCROLL_BEGIN) {
+        companion_cancel();
+    } else if (code == LV_EVENT_RELEASED) {
+        muse_companion_release(&s_companion, now);
+    } else if (code == LV_EVENT_CLICKED) {
+        muse_companion_tap(&s_companion, now);
+    } else if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING) {
+        lv_indev_t *indev = lv_event_get_indev(e);
+        if (!indev) return;
+        lv_point_t point;
+        lv_area_t area;
+        lv_indev_get_point(indev, &point);
+        lv_obj_get_coords(s_canvas, &area);
+        float w = lv_area_get_width(&area), h = lv_area_get_height(&area);
+        if (w <= 0 || h <= 0) return;
+        float x = 2 * (point.x - area.x1) / w - 1;
+        float y = 2 * (point.y - area.y1) / h - 1;
+        if (code == LV_EVENT_PRESSED) muse_companion_press(&s_companion, x, y, now);
+        else muse_companion_move(&s_companion, x, y, now);
+    }
+}
+#else
+#define companion_cancel() ((void)0)
 static void on_canvas_clicked(lv_event_t *e)
 {
     (void)e;
     muse_state_make_happy();
 }
+#endif
 
 static const lv_font_t *font_pick(const lv_font_t *full, const lv_font_t *compact)
 {
@@ -954,7 +993,11 @@ static void build_screen(void)
     lv_obj_align(s_canvas, LV_ALIGN_CENTER, 0, s_big_y);
     s_muse_y = s_big_y;
     lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_CLICKABLE);
+#if CONFIG_MUSE_COMPANION_TOUCH
+    lv_obj_add_event_cb(s_canvas, on_canvas_touch, LV_EVENT_ALL, NULL);
+#else
     lv_obj_add_event_cb(s_canvas, on_canvas_clicked, LV_EVENT_CLICKED, NULL);
+#endif
     if (s_ring) {
         /* The canvas's black corners reach the bezel; keep the ring on top. */
         lv_obj_move_foreground(s_ring);
@@ -1694,6 +1737,7 @@ static void frame_tick(lv_timer_t *timer)
     float now = (float)esp_timer_get_time() / 1e6f;
 
     if (mode != s_last_mode) {
+        companion_cancel();
         if (muse_voice_in_call()) s_level = 0;   /* do not smooth speaker energy into the mic meter */
         if (mode == MUSE_MODE_LISTENING) {
             image_hide_locked();
@@ -1702,23 +1746,28 @@ static void frame_tick(lv_timer_t *timer)
         s_last_mode = mode;
     }
     if (update_sleep()) {
+        companion_cancel();
         return;
     }
 #if CONFIG_MUSE_VIDEO
     if (muse_video_tick()) {
+        companion_cancel();
         muse_menu_close();
         return;   /* video covers everything */
     }
 #endif
     update_chrome(now);
     if (muse_menu_tick(now)) {
+        companion_cancel();
         image_hide_locked();
         return;   /* the menu covers the face */
     }
     if (s_image_dsc.data) {
+        companion_cancel();
         return;   /* the image covers the face */
     }
     if (s_tv && lv_obj_get_scroll_x(s_tv) != 0) {
+        companion_cancel();
         /* Off screen, or sliding to or from settings: hold still so the
          * slide gets the whole frame time. */
         return;
@@ -1738,6 +1787,9 @@ static void frame_tick(lv_timer_t *timer)
         .level = s_level,
         .happy = muse_state_happiness(),
     };
+#if CONFIG_MUSE_COMPANION_TOUCH
+    muse_companion_pose(&s_companion, &pose);
+#endif
     if (!muse_board->epaper || mode != s_last_epaper_pose) {
         muse_pixel_render(&pose);
         invalidate_muse();

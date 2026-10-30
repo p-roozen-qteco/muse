@@ -78,6 +78,10 @@ static inline void muse_chat_reject(muse_chat_rejected_t *rejected, const char *
 #define MUSE_HATCH_NOTE_TAIL "\"}]}"
 #define MUSE_HATCH_WAV_HEADER 44
 
+/* Optional device delivery preference, separate from the unchanged WAV.
+ * Returns 0 for an unavailable/invalid node or insufficient space. */
+size_t muse_hatch_auto_note_head(char *out, size_t cap, const char *node_id);
+
 /* Voice note helpers (muse_chat_text.c). The note's length isn't known until
  * the release, so the WAV header gives the streaming "unknown" size. */
 void muse_hatch_wav_header(uint8_t h[MUSE_HATCH_WAV_HEADER], uint32_t rate);

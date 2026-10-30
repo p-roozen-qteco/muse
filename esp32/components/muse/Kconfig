@@ -307,7 +307,29 @@ menu "Muse"
             Advertise audio.play_file and audio.play_reply to the paired Muse.
             Stream MP3 from that VM, play it on the speaker and show supplied
             text. BOOT interrupts playback. Recording and transcription keep
-            their existing text-output voice-note request.
+            their existing text-output voice-note format. Automatic delivery
+            instructions are controlled separately by MUSE_AUTO_AUDIO_REPLIES.
+
+    config MUSE_AUTO_AUDIO_REPLIES
+        bool "Ask Muse to speak voice-note answers on this gadget"
+        depends on MUSE_AUDIO_COMMANDS && !MUSE_SPOKEN_REPLIES
+        default n
+        help
+            Add a separate delivery instruction to BOOT voice-note requests,
+            addressing this gadget by its Link node ID. The WAV and text output
+            modality stay unchanged. Muse uses its speech tools and audio.play_file
+            with captions. Requires those tools in the paired Muse VM; text is
+            still available when speech fails. Muting or zero volume before
+            recording suppresses the instruction. It may be visible in the app.
+
+    config MUSE_COMPANION_TOUCH
+        bool "Expressive face with touch attention and a wink"
+        depends on MUSE_ENABLED && !MUSE_UI_FREEINK
+        default n
+        help
+            The default avatar follows a touch, winks on a tap and enjoys a
+            gentle hold. Only reacts while idle; speech and gestures take priority.
+            No sounds, network requests or allocations are made by touch reactions.
 
     config MUSE_REALTIME_VOICE
         bool "Live voice calls with Muse (experimental)"

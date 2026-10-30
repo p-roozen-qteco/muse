@@ -38,6 +38,9 @@ typedef struct {
     float mode_t;    /* seconds in current mode */
     float level;     /* 0..1 live audio level */
     float happy;     /* 0..1 pet reaction */
+    float attention; /* 0..1 touch gaze blend; zero preserves custom avatars */
+    float gaze_x, gaze_y; /* -1..1 touch position */
+    float wink;      /* 0..1 right eye closure, idle only */
 } muse_pose_t;
 
 /* Accent colour of a mode (for the surrounding UI), as 0xRRGGBB. */

@@ -39,6 +39,11 @@ class ChatSession(unittest.TestCase):
 #include "cJSON.h"
 #include "minimp3.h"
 #include "muse_chat_priv.h"
+#define CONFIG_MUSE_AUTO_AUDIO_REPLIES 1
+static bool speaker=true;
+static int volume=50;
+static bool muse_settings_speaker_on() { return speaker; }
+static int muse_settings_volume() { return volume; }
 #define ESP_LOGI(...) ((void)0)
 static void host_log(const char *, const char *, ...) {}
 #define ESP_LOGW(...) host_log(__VA_ARGS__)
@@ -206,6 +211,14 @@ static void audio_without_caption_can_finish() {
     check_turn();
     assert(failures == 0 && completions == 1);
 }
+static void automatic_delivery_policy() {
+    begin(); assert(s_turn.auto_audio && !s_turn.spoken);
+    speaker=false; begin(); assert(!s_turn.auto_audio);
+    speaker=true; volume=0; begin(); assert(!s_turn.auto_audio);
+    volume=50; begin(true); assert(!s_turn.auto_audio);
+    begin(); assert(s_turn.auto_audio);
+    speaker=false; assert(s_turn.auto_audio); // open_note rechecks mute before sending.
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     switch (atoi(argv[1])) {
@@ -218,6 +231,7 @@ int main(int argc, char **argv) {
     case 6: explicit_audio_ignores_chat(); break;
     case 7: empty_reply_is_an_error(); break;
     case 8: audio_without_caption_can_finish(); break;
+    case 9: automatic_delivery_policy(); break;
     default: return 2;
     }
 }
@@ -268,3 +282,6 @@ int main(int argc, char **argv) {
 
     def test_explicit_audio_does_not_require_a_caption(self):
         self.run_case(8)
+
+    def test_auto_delivery_is_voice_only_and_respects_mute_and_volume(self):
+        self.run_case(9)
