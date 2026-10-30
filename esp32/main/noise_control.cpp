@@ -44,6 +44,9 @@
 
 extern "C" {
 #include "cJSON.h"
+#if CONFIG_MUSE_AUDIO_COMMANDS
+#include "audio_commands.h"
+#endif
 #include "led_status.h"
 #include "ota.h"
 #if CONFIG_MUSE_ENABLED
@@ -1389,6 +1392,9 @@ static char *build_register_json(void) {
     add_register_metadata_string(&metadata, params, "network_ssid", wifi_ssid);
 
     cJSON *commands = cJSON_CreateObject();
+#if CONFIG_MUSE_AUDIO_COMMANDS
+    audio_commands_register(commands);
+#endif
     add_command(commands, "device.health",
                 "Report basic Link health, including battery level (percent), "
                 "voltage, and whether it is charging or on USB power; each is "

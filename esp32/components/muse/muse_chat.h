@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "muse_audio_message.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -119,6 +120,9 @@ size_t muse_hatch_mp3_selftest(int16_t **pcm);
  * returns the frames taken (CONFIG_MUSE_HATCH only).
  */
 size_t muse_hatch_turn_audio_wait(const int16_t *pcm, size_t frames, int wait_ms);
+
+/* Start an explicit VM audio download; no recording or chat message is sent. */
+bool muse_hatch_audio_message_begin(const muse_audio_message_t *request);
 
 /* ---- Typed turns from the serial console (CONFIG_MUSE_HATCH only) ---- */
 

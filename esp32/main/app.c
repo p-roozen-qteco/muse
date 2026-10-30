@@ -58,6 +58,9 @@
 #include "vm_connect.h"
 #include "noise_control.h"
 #include "image_fetch.h"
+#if CONFIG_MUSE_AUDIO_COMMANDS
+#include "audio_commands.h"
+#endif
 #include "noise_tunnel.h"
 #include "led_status.h"
 #include "button.h"
@@ -1864,6 +1867,11 @@ static cJSON *bug_report_command(
 static cJSON *on_ws_command(
     const char *command, cJSON *params, const char *request_id,
     noise_ctrl_session_generation_t session_generation) {
+#if CONFIG_MUSE_AUDIO_COMMANDS
+    if (audio_commands_handles(command)) {
+        return audio_commands_handle(command, params, request_id, session_generation);
+    }
+#endif
 #if CONFIG_HOMEHUB_BLE_COMMANDS
     if (ble_commands_handles(command)) {
         return ble_commands_handle(command, params, request_id, session_generation);

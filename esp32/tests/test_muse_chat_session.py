@@ -25,8 +25,9 @@ class ChatSession(unittest.TestCase):
         types = source[source.index('enum phase_t'):source.index('/* 10 KB')]
         handlers = source[source.index('static int find_msg('):source.index('static void on_chat_ack(')]
         reset = source[source.index('static bool turn_start('):source.index('static void turn_begin(')]
-        tts = source.index('static void start_tts(void)')
-        start_tts = source[tts:source.index('\n}\n', tts) + 3]
+        finish = source[source.index('static void check_turn('):source.index('/* ---- Inbound dispatch') ]
+        tts = source.index('/* Captions remain available')
+        start_tts = source[tts:source.index('static void tts_data(', tts)]
         code = r'''
 #include <cassert>
 #include <cstdint>
@@ -39,14 +40,18 @@ class ChatSession(unittest.TestCase):
 #include "minimp3.h"
 #include "muse_chat_priv.h"
 #define ESP_LOGI(...) ((void)0)
+static void host_log(const char *, const char *, ...) {}
+#define ESP_LOGW(...) host_log(__VA_ARGS__)
+static const char *TAG = "test";
 ''' + constants + types + r'''
 static turn_t s_turn;
 static char s_reply_shown[EV_TEXT];
 static int64_t s_last_seq, s_marks[4];
-static int captions, console_events;
+static int captions, console_events, failures, completions;
+static int64_t clock_us = 12345;
 enum mark_t { M_TEXT, M_DONE };
 static void mark(mark_t) {}
-static int64_t now_us() { return 12345; }
+static int64_t now_us() { return clock_us; }
 static void emit(muse_hatch_ev_t type, const char *) {
     if (type == MUSE_HATCH_EV_REPLY) captions++;
 }
@@ -56,11 +61,15 @@ bool muse_hatch_caption_at(const char *text, size_t, char *out, size_t cap) {
     strlcpy(out, text, cap); return text[0];
 }
 static void turn_finish() { s_turn.phase = P_IDLE; }
-static void turn_fail(const char *) { turn_finish(); }
+static void turn_fail(const char *) { failures++; turn_finish(); }
+static void turn_done(bool) { completions++; turn_finish(); }
+static void on_dictation_end(bool) {}
+static void log_marks() {}
 static bool ensure_connected() { return true; }
+static bool send_reset(int64_t) { return true; }
 bool muse_hatch_configured() { return true; }
 static void resampler_init(resampler_t *, int, int) {}
-''' + reset + handlers + start_tts + r'''
+''' + reset + handlers + start_tts + finish + r'''
 static void begin(bool typed = false) {
     assert(turn_start(s_turn.gen + 1, typed));
     s_turn.phase = P_WAIT_REPLY;
@@ -178,6 +187,25 @@ static void paced_to_the_kept_text() {
     assert(s_turn.msgs[0].pcm_frames == (uint32_t)(11 * MIC_RATE / TEXT_CHARS_PER_S));
     s_turn.texts = nullptr;
 }
+static void explicit_audio_ignores_chat() {
+    begin(); s_turn.audio_source = MUSE_AUDIO_FILE;
+    event("message.assistant", "other", "", "Must not join playback");
+    assert(!s_turn.nmsgs && !captions && !console_events);
+}
+static void empty_reply_is_an_error() {
+    begin(); s_turn.spoken = true; event("message.assistant", "empty", "note", "");
+    clock_us += SETTLE_US + 1;
+    check_turn();
+    assert(failures == 1 && completions == 0 && s_turn.phase == P_IDLE);
+}
+static void audio_without_caption_can_finish() {
+    begin(); s_turn.audio_source = MUSE_AUDIO_FILE;
+    s_turn.nmsgs = 1; s_turn.msgs[0].done = true;
+    s_turn.msgs[0].tts = TTS_FINISHED;
+    s_turn.msgs[0].pcm_frames = 16000;
+    check_turn();
+    assert(failures == 0 && completions == 1);
+}
 int main(int argc, char **argv) {
     assert(argc == 2);
     switch (atoi(argv[1])) {
@@ -187,6 +215,9 @@ int main(int argc, char **argv) {
     case 3: cut_inside_a_character(); break;
     case 4: character_split_across_pieces(); break;
     case 5: paced_to_the_kept_text(); break;
+    case 6: explicit_audio_ignores_chat(); break;
+    case 7: empty_reply_is_an_error(); break;
+    case 8: audio_without_caption_can_finish(); break;
     default: return 2;
     }
 }
@@ -228,3 +259,12 @@ int main(int argc, char **argv) {
 
     def test_long_reply_is_paced_to_the_text_kept(self):
         self.run_case(5)
+
+    def test_explicit_audio_does_not_absorb_unrelated_chat(self):
+        self.run_case(6)
+
+    def test_empty_server_answer_reports_failure_instead_of_silent_success(self):
+        self.run_case(7)
+
+    def test_explicit_audio_does_not_require_a_caption(self):
+        self.run_case(8)

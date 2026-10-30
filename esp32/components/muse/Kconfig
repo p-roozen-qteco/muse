@@ -283,10 +283,31 @@ menu "Muse"
         help
             Push-to-talk turns go over a voice session of Muse's own, to the
             VM Home Link is paired with or one set up on the device with a
-            device token. Replies are text, shown as captions; start_tts in
-            muse_chat_session.cpp is where a TTS API of your own can speak
-            them. Needs PSRAM. Without it, voice notes go over Home Link's own
-            session to its paired VM and replies are shown as text.
+            device token. Replies are shown as captions; Spoken replies can
+            also play Muse's reply audio. Needs PSRAM. Without it, voice notes
+            go over Home Link's own session to its paired VM and replies are
+            shown as text.
+
+    config MUSE_SPOKEN_REPLIES
+        bool "Play Muse's spoken replies to voice notes"
+        depends on MUSE_HATCH && SPIRAM
+        default n
+        help
+            Keep hold-to-record voice notes and request a voice-modality reply
+            while the speaker is enabled. Fetch the reply's MP3 over the same
+            authenticated Muse session and play it with captions. Muting the
+            speaker keeps text-only replies. Missing, refused or stalled audio
+            falls back to the text; no external TTS provider is used.
+
+    config MUSE_AUDIO_COMMANDS
+        bool "Let Muse send audio messages to the gadget"
+        depends on MUSE_ENABLED && MUSE_HATCH && SPIRAM
+        default n
+        help
+            Advertise audio.play_file and audio.play_reply to the paired Muse.
+            Stream MP3 from that VM, play it on the speaker and show supplied
+            text. BOOT interrupts playback. Recording and transcription keep
+            their existing text-output voice-note request.
 
     config MUSE_REALTIME_VOICE
         bool "Live voice calls with Muse (experimental)"

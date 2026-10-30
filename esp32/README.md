@@ -284,8 +284,10 @@ keyboard input, and can render scripted screenshots without a display server.
 
 Replies from Muse are text: push-to-talk sends your voice note, Muse
 transcribes it and answers in writing, and boards with a screen show the
-answer as captions (Voice PE and reSpeaker Lite replies show up in the Muse app). Two
-things you can change:
+answer as captions (Voice PE and reSpeaker Lite replies show up in the Muse app).
+The S3 1.8 test profile also advertises commands for playing an MP3 supplied by
+Muse, with optional text captions; see the [audio-message guide](devices/waveshare-s3-18-audio.md).
+Two things you can change:
 
 - **Shorter answers.** Ask for them in the message itself, such as "Answer in
   one sentence."

@@ -355,7 +355,7 @@ int main(int argc,char **argv) {
     if(scenario==0) {
         push(MUSE_PTT_DOWN); push(MUSE_PTT_UP);
         bool delivered_note;
-        assert(hatch_reply(&delivered_note));
+        assert(hatch_reply(&delivered_note, NULL));
         assert(queue.n==1 && queue.items[0].type==MUSE_PTT_UP);
         run_call(true,0);
         assert(starts==1 && delivered>0 && delivered<=6 && !held && !notes);

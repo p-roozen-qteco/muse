@@ -26,8 +26,9 @@
  *   2. POST /chat/stream with the transcript. The reply arrives as events on
  *      the connection's long-lived POST /chat/subscribe stream: one or more
  *      assistant messages, each delta.message_start / text_append / message_done.
- *   3. Each finished message is shown at reading pace (see start_tts to
- *      speak it with a TTS API of your own; Muse doesn't speak gadget replies).
+ *   3. With MUSE_SPOKEN_REPLIES and the speaker on, request voice output and
+ *      fetch the message's MP3 from Muse, with captions following playback.
+ *      Otherwise, or if audio is unavailable, show the reply at reading pace.
  * A turn has no explicit end event; like Sidekick, it settles once every
  * message is done and nothing has arrived for a few seconds.
  *
@@ -77,6 +78,7 @@ extern "C" {
 #include "muse_wifi.h"
 }
 #include "muse_chat_priv.h"
+#include "muse_audio_message.h"
 #include "sdkconfig.h"
 #if CONFIG_MUSE_REALTIME_VOICE
 #include "muse_voice_call_priv.h"
@@ -118,6 +120,9 @@ static_assert(MP3_BUF > MP3_POLL_ROOM + MP3_HOLD, "reads would stall with the MP
 #define SPEECH_CHARS_PER_S 14              /* until the speech's length is known */
 #define TEXT_CHARS_PER_S 16                /* speaker off: reading pace, a little over speech */
 #define TEXT_HOLD_S 2                      /* speaker off: how long a message's last lines stay up */
+#define AUDIO_FILE_CHUNK (32 * 1024)       /* range replies fit the Noise frame buffer */
+#define AUDIO_FILE_MAX (8 * 1024 * 1024)
+#define TTS_STALL_US (30 * 1000000LL)       /* bounded wait for reply audio or decode progress */
 
 #define PING_US (20 * 1000000LL)
 #define DEAD_US (60 * 1000000LL)           /* nothing from the server, pongs included */
@@ -145,7 +150,7 @@ static_assert(MP3_BUF > MP3_POLL_ROOM + MP3_HOLD, "reads would stall with the MP
 
 /* ---- Voice task <-> session task ---- */
 
-enum cmd_type_t : uint8_t { CMD_CONNECT, CMD_FORGET, CMD_BEGIN, CMD_END, CMD_CANCEL, CMD_TEXT, CMD_TEXT_CANCEL, CMD_WAKE };
+enum cmd_type_t : uint8_t { CMD_CONNECT, CMD_FORGET, CMD_BEGIN, CMD_END, CMD_CANCEL, CMD_TEXT, CMD_TEXT_CANCEL, CMD_WAKE, CMD_AUDIO };
 
 struct cmd_t {
     cmd_type_t type;
@@ -230,6 +235,10 @@ struct turn_t {
     phase_t phase;
     uint32_t gen;
     bool text;               /* typed at the console: the reply goes there, unspoken */
+    bool spoken;             /* freeze reply modality when this voice note starts */
+    int audio_source;        /* zero: normal chat; otherwise an explicit audio command */
+    char audio_target[512];
+    size_t audio_offset, audio_chunk_bytes;
     bool end_requested, end_sent, chat_posted, acked;
     int64_t dict_id, chat_id;
     int64_t start_us, end_sent_us, chat_us, last_event_us, last_content_us;
@@ -252,6 +261,8 @@ struct turn_t {
     bool agent_busy;
     /* TTS */
     int tts_msg;             /* message being fetched (or shown, speaker off), or -1 */
+    int64_t tts_id, tts_progress_us;
+    bool tts_legacy;          /* retry the legacy route once, on a primary-route 404 only */
     bool silent;             /* speaker off: tts_msg is paced by silence, not fetched */
     uint8_t *mp3;            /* MP3_BUF */
     size_t mp3_len;
@@ -683,7 +694,7 @@ static bool send_reset(int64_t id)
 
 /* Opens a request stream. Returns its id, or 0 if the connection failed. */
 static int64_t open_stream(kind_t kind, const char *verb, const char *path, const char *content_type,
-                           const char *accept, const char *body, bool end_body)
+                           const char *accept, const char *body, bool end_body, const char *range = nullptr)
 {
     stream_t *slot = nullptr;
     for (auto &s : s_streams) {
@@ -698,7 +709,7 @@ static int64_t open_stream(kind_t kind, const char *verb, const char *path, cons
     }
     char req_id[40];
     snprintf(req_id, sizeof(req_id), "muse-%08lx-%08lx", (unsigned long)esp_random(), (unsigned long)esp_random());
-    HeaderView hdrs[4];
+    HeaderView hdrs[5];
     size_t nh = 0;
     hdrs[nh++] = { StringView("x-request-id"), StringView(req_id) };
     hdrs[nh++] = { StringView("x-app-id"), StringView("hatch-web") };
@@ -707,6 +718,9 @@ static int64_t open_stream(kind_t kind, const char *verb, const char *path, cons
     }
     if (accept) {
         hdrs[nh++] = { StringView("accept"), StringView(accept) };
+    }
+    if (range) {
+        hdrs[nh++] = { StringView("Range"), StringView(range) };
     }
     int64_t id = s_conn.next_id++;
     ApplicationRequestView req;
@@ -984,7 +998,7 @@ static void turn_finish(void)
 {
     turn_reset_streams();
     s_turn.phase = P_IDLE;
-    s_turn.dict_id = s_turn.chat_id = 0;
+    s_turn.dict_id = s_turn.chat_id = s_turn.tts_id = 0;
     s_turn.tts_msg = -1;
     s_turn.silent = false;
     s_turn.mp3_len = 0;
@@ -1030,6 +1044,9 @@ static bool turn_start(uint32_t gen, bool text)
     s_turn.texts = texts;
     s_turn.gen = gen;
     s_turn.text = text;
+#if CONFIG_MUSE_SPOKEN_REPLIES
+    s_turn.spoken = !text && muse_settings_speaker_on();
+#endif
     s_turn.tts_msg = -1;
     memset(s_marks, 0, sizeof(s_marks));
     s_reply_shown[0] = '\0';
@@ -1148,8 +1165,9 @@ static bool open_note(void)
     if (!s_turn.chat_id) {
         return false;
     }
-    s_turn.body_sent = sizeof(MUSE_HATCH_NOTE_HEAD) - 1;
-    if (!send_body(s_turn.chat_id, reinterpret_cast<const uint8_t *>(MUSE_HATCH_NOTE_HEAD), sizeof(MUSE_HATCH_NOTE_HEAD) - 1, false)) {
+    const char *head = s_turn.spoken ? MUSE_HATCH_NOTE_HEAD_VOICE : MUSE_HATCH_NOTE_HEAD;
+    s_turn.body_sent = strlen(head);
+    if (!send_body(s_turn.chat_id, reinterpret_cast<const uint8_t *>(head), strlen(head), false)) {
         return false;
     }
     muse_hatch_wav_header(s_turn.note, MIC_RATE);
@@ -1243,7 +1261,7 @@ static void post_chat(const char *text)
     }
     ESP_LOGI(TAG, "heard: \"%s\"", text);
     emit(MUSE_HATCH_EV_HEARD, text);
-    send_chat(text, "text");
+    send_chat(text, s_turn.spoken ? "voice" : "text");
 }
 
 /* A typed turn: the text goes straight to the chat. */
@@ -1473,7 +1491,7 @@ static void on_event(cJSON *line)
         }
         s_last_seq = v > s_last_seq ? v : s_last_seq;
     }
-    if (s_turn.phase != P_WAIT_REPLY) {
+    if (s_turn.phase != P_WAIT_REPLY || s_turn.audio_source) {
         return;
     }
     const char *event = cJSON_GetStringValue(cJSON_GetObjectItem(line, "event")) ?: "";
@@ -1553,52 +1571,106 @@ static void on_chat_ack(stream_t *s)
 
 /* ---- Turn: speech ---- */
 
+/* Captions remain available even if the server cannot supply reply audio. */
+static void tts_caption_only(int i)
+{
+    msg_t &m = s_turn.msgs[i];
+    m.pcm_start = s_turn.pcm_out;
+    size_t shown = s_turn.texts ? strlen(s_turn.texts + i * TEXT_MAX) : m.len;
+    m.pcm_frames = (uint32_t)(shown * MIC_RATE / TEXT_CHARS_PER_S);
+    m.tts = TTS_ACTIVE;
+    s_turn.tts_msg = i;
+    s_turn.silent = true;
+    s_turn.mp3_len = 0;
+    show_reply_start(m);
+}
+
+#if CONFIG_MUSE_SPOKEN_REPLIES || CONFIG_MUSE_AUDIO_COMMANDS
+/* The native reply and VM-file routes use the same authenticated session. */
+static bool tts_open(int i, bool legacy)
+{
+    char path[1600];
+    muse_audio_source_t source = s_turn.audio_source ? (muse_audio_source_t)s_turn.audio_source : MUSE_AUDIO_REPLY;
+    const char *target = s_turn.audio_source ? s_turn.audio_target : s_turn.msgs[i].id;
+    if (!muse_audio_message_path(source, target, legacy, path, sizeof(path))) return false;
+    char range[64];
+    if (source == MUSE_AUDIO_FILE) {
+        if (s_turn.audio_offset >= AUDIO_FILE_MAX) return false;
+        snprintf(range, sizeof(range), "bytes=%u-%u", (unsigned)s_turn.audio_offset,
+                 (unsigned)(s_turn.audio_offset + AUDIO_FILE_CHUNK - 1));
+    }
+    int64_t id = open_stream(K_TTS, "GET", path, nullptr, "audio/mpeg", nullptr, true,
+                             source == MUSE_AUDIO_FILE ? range : nullptr);
+    s_turn.audio_chunk_bytes = 0;
+    stream_t *stream = id ? find_stream(id) : nullptr;
+    if (!stream) return false;
+    stream->msg = i;
+    s_turn.tts_id = id;
+    s_turn.tts_legacy = legacy;
+    s_turn.tts_progress_us = now_us();
+    mark(M_TTS);
+    return true;
+}
+#endif
+
+static void tts_fallback(const char *why)
+{
+    int i = s_turn.tts_msg;
+    send_reset(s_turn.tts_id);
+    s_turn.tts_id = 0;
+    s_turn.mp3_ended = false;
+    if (s_turn.audio_source) {
+        ESP_LOGW(TAG, "audio command failed: %s", why);
+        turn_fail("AUDIO UNAVAILABLE");
+        return;
+    }
+    if (i >= 0) {
+        ESP_LOGW(TAG, "reply audio unavailable (%s); keeping text", why);
+        tts_caption_only(i);
+    }
+}
+
 static void start_tts(void)
 {
     if (s_turn.tts_msg >= 0) {
+        if (!s_turn.silent && now_us() - s_turn.tts_progress_us > TTS_STALL_US) {
+            tts_fallback("timeout");
+        }
         return;
     }
     for (int i = 0; i < s_turn.nmsgs; i++) {
         msg_t &m = s_turn.msgs[i];
-        if (m.tts != TTS_QUEUED) {
-            continue;
+        if (m.tts != TTS_QUEUED) continue;
+#if CONFIG_MUSE_SPOKEN_REPLIES || CONFIG_MUSE_AUDIO_COMMANDS
+        if ((s_turn.spoken || s_turn.audio_source) && muse_settings_speaker_on()) {
+            m.tts = TTS_ACTIVE;
+            m.pcm_start = s_turn.pcm_out;
+            m.pcm_frames = 0;
+            s_turn.tts_msg = i;
+            s_turn.silent = false;
+            s_turn.mp3_len = 0;
+            s_turn.mp3_ended = false;
+            s_turn.kbps = s_turn.down_rate = 0;
+            mp3dec_init(&s_turn.dec);
+            show_reply_start(m);
+            if (!tts_open(i, false)) tts_fallback("request failed");
+            return;
         }
-        /*
-         * Replies are text, shown at reading pace: silence in place of speech
-         * paces the captions and ends the turn. To speak them instead, send
-         * the message's text (s_turn.texts + i * TEXT_MAX, if texts was
-         * allocated; up to TEXT_MAX - 1 bytes) to a TTS API of your choice and
-         * play the MP3 it returns. In place of the silence below: keep
-         * m.tts = TTS_ACTIVE and s_turn.tts_msg = i, set s_turn.silent = false,
-         * m.pcm_start = s_turn.pcm_out, m.pcm_frames = 0, s_turn.mp3_len = 0,
-         * s_turn.mp3_ended = false, s_turn.kbps = 0, s_turn.down_rate = 0 and
-         * mp3dec_init(&s_turn.dec). Then, on this task, pass the MP3 to
-         * tts_data() as it arrives (it buffers up to MP3_BUF and drops the
-         * rest, so hold off while it's full) and set s_turn.mp3_ended at the
-         * end. decode() plays it at the speaker's volume, captions following,
-         * and finishes the message once it's drained.
-         */
-        m.pcm_start = s_turn.pcm_out;
-        /* Paced to the text kept: a reply longer than TEXT_MAX shows what was
-         * kept at reading pace, not stretched over the whole reply's time. */
-        size_t shown = s_turn.texts ? strlen(s_turn.texts + i * TEXT_MAX) : m.len;
-        m.pcm_frames = (uint32_t)(shown * MIC_RATE / TEXT_CHARS_PER_S);
-        m.tts = TTS_ACTIVE;
-        s_turn.tts_msg = i;
-        s_turn.silent = true;
-        ESP_LOGI(TAG, "showing message %s (%u chars)", m.id, (unsigned)m.len);
-        show_reply_start(m);
+#endif
+        if (s_turn.audio_source) { turn_fail("SPEAKER MUTED"); return; }
+        tts_caption_only(i);
         return;
     }
 }
 
 static void tts_data(const uint8_t *data, size_t len)
 {
-    if (s_turn.mp3_len + len > MP3_BUF) {
-        ESP_LOGW(TAG, "MP3 buffer full, dropping %u bytes", (unsigned)len);
-        len = MP3_BUF - s_turn.mp3_len;
+    if (len > MP3_BUF - s_turn.mp3_len) {
+        tts_fallback("buffer limit");
+        return;
     }
     mark(M_MP3);
+    s_turn.tts_progress_us = now_us();
     memcpy(s_turn.mp3 + s_turn.mp3_len, data, len);
     s_turn.mp3_len += len;
 }
@@ -1606,15 +1678,26 @@ static void tts_data(const uint8_t *data, size_t len)
 static void tts_end(stream_t *s, bool ok)
 {
     int i = s->msg;
+    int64_t id = s->id;
+    int status = s->status;
     close_stream(s);
-    if (i < 0 || i != s_turn.tts_msg) {
+    if (i < 0 || i != s_turn.tts_msg || id != s_turn.tts_id) {
         return;
     }
+    s_turn.tts_id = 0;
     if (ok) {
+#if CONFIG_MUSE_AUDIO_COMMANDS
+        if (s_turn.audio_source == MUSE_AUDIO_FILE && status == 206 && s_turn.audio_chunk_bytes == AUDIO_FILE_CHUNK) {
+            s_turn.audio_offset += s_turn.audio_chunk_bytes;
+            if (!tts_open(i, false)) tts_fallback("file range failed");
+            return;
+        }
+#else
+        (void)status;
+#endif
         s_turn.mp3_ended = true;   /* decode() drains the rest, then finishes */
     } else {
-        s_turn.msgs[i].tts = TTS_FINISHED;
-        s_turn.tts_msg = -1;
+        tts_fallback("stream ended");
     }
 }
 
@@ -1683,6 +1766,7 @@ static void decode(void)
             xStreamBufferSend(s_out, s_pcm16, n * sizeof(int16_t), 0);
         }
         s_turn.pcm_out += n;
+        s_turn.tts_progress_us = now_us();
         s_turn.kbps = info.bitrate_kbps;
     }
     if (off) {
@@ -1696,6 +1780,10 @@ static void decode(void)
         m.pcm_frames = s_turn.pcm_out - m.pcm_start + rest;
     }
     if (s_turn.mp3_ended && !s_turn.mp3_len) {
+        if (s_turn.pcm_out == m.pcm_start) {
+            tts_fallback("no playable MP3");
+            return;
+        }
         m.pcm_frames = s_turn.pcm_out - m.pcm_start;
         m.tts = TTS_FINISHED;
         s_turn.tts_msg = -1;
@@ -1721,7 +1809,8 @@ static void check_turn(void)
             turn_fail("NO REPLY FROM MUSE");
             return;
         }
-        turn_done(false);
+        if (s_turn.audio_source) turn_fail("AUDIO TIME LIMIT");
+        else turn_done(false);
         return;
     }
     if (!s_turn.nmsgs) {
@@ -1736,11 +1825,16 @@ static void check_turn(void)
             return;
         }
     }
-    if (t - s_turn.last_event_us < SETTLE_US) {
+    if (!s_turn.audio_source && t - s_turn.last_event_us < SETTLE_US) {
         return;
     }
     if (s_turn.agent_busy && t - s_turn.last_content_us < (text ? TEXT_BUSY_HOLD_US : BUSY_HOLD_US)) {
         return;
+    }
+    if (!s_turn.text && !s_turn.audio_source && s_turn.spoken) {
+        bool content = false;
+        for (int i = 0; i < s_turn.nmsgs; i++) content |= s_turn.msgs[i].len > 0;
+        if (!content) { turn_fail("MUSE RETURNED NO ANSWER"); return; }
     }
     ESP_LOGI(TAG, "turn done: %d message(s) in %.1fs", s_turn.nmsgs, (t - s_turn.start_us) / 1e6);
     log_marks();
@@ -1807,7 +1901,14 @@ static void stream_data(stream_t *s, ConstByteSpan data)
         break;
     }
     case K_TTS:
-        if (s->msg == s_turn.tts_msg) {
+        if (s->msg == s_turn.tts_msg && s->id == s_turn.tts_id && s->status >= 200 && s->status < 300) {
+            if (s_turn.audio_source == MUSE_AUDIO_FILE) {
+                if (data.size() > AUDIO_FILE_CHUNK - s_turn.audio_chunk_bytes) {
+                    tts_fallback("file server ignored Range");
+                    break;
+                }
+                s_turn.audio_chunk_bytes += data.size();
+            }
             tts_data(data.data(), data.size());
         }
         break;
@@ -1881,6 +1982,39 @@ static bool on_frame(const DecodedServiceFrame &f)
     switch (f.kind) {
     case ServiceFrameKind::Response:
         s->status = f.response.status;
+        if (s->kind == K_TTS && s->id == s_turn.tts_id && s_turn.audio_source == MUSE_AUDIO_FILE) {
+            /* Same range/EOF contract as image_fetch.c: a full final range
+             * is followed by 416. Never accept a whole-file 200 at a nonzero offset. */
+            if (s->status == 416 && s_turn.audio_offset > 0) {
+                close_stream(s);
+                s_turn.tts_id = 0;
+                s_turn.mp3_ended = true;
+                return true;
+            }
+            if (s->status == 200 && s_turn.audio_offset > 0) {
+                tts_fallback("file server ignored Range");
+                return true;
+            }
+        }
+        if (s->kind == K_TTS && (s->status < 200 || s->status >= 300)) {
+            if (s->id != s_turn.tts_id || s->msg != s_turn.tts_msg) {
+                send_reset(s->id);
+                return true;
+            }
+            ESP_LOGW(TAG, "reply audio: HTTP %d", s->status);
+#if CONFIG_MUSE_SPOKEN_REPLIES || CONFIG_MUSE_AUDIO_COMMANDS
+            bool retry = s->status == 404 && !s_turn.tts_legacy && s_turn.audio_source != MUSE_AUDIO_FILE;
+            int i = s->msg;
+            send_reset(s->id);
+            s_turn.tts_id = 0;
+            if (retry && i >= 0 && tts_open(i, true)) return true;
+#else
+            send_reset(s->id);
+            s_turn.tts_id = 0;
+#endif
+            tts_fallback("HTTP response");
+            return true;
+        }
         if (f.response.status >= 400) {
             return on_http_error(s, f.response);
         }
@@ -2026,6 +2160,29 @@ static void handle(const cmd_t &cmd)
         } else {
             text_begin(cmd.text);
         }
+        free(cmd.text);
+        break;
+    case CMD_AUDIO:
+#if CONFIG_MUSE_AUDIO_COMMANDS
+        if (cmd.gen == s_gen.load()) {
+            const auto *request = reinterpret_cast<const muse_audio_message_t *>(cmd.text);
+            if (turn_start(cmd.gen, false)) {
+                s_turn.audio_source = request->source;
+                strlcpy(s_turn.audio_target, request->target, sizeof(s_turn.audio_target));
+                s_turn.phase = P_WAIT_REPLY;
+                s_turn.acked = true;
+                s_turn.nmsgs = 1;
+                msg_t &m = s_turn.msgs[0];
+                strlcpy(m.id, "audio-message", sizeof(m.id));
+                m.done = true;
+                m.len = strlen(request->text);
+                m.tts = TTS_QUEUED;
+                if (s_turn.texts) strlcpy(s_turn.texts, request->text, TEXT_MAX);
+                strlcpy(m.tail, request->text, sizeof(m.tail));
+                emit(MUSE_HATCH_EV_SENT, nullptr);
+            }
+        }
+#endif
         free(cmd.text);
         break;
     case CMD_TEXT_CANCEL:
@@ -2197,6 +2354,21 @@ extern "C" bool muse_hatch_ready(void)
 {
     return s_cmds && muse_hatch_configured() && muse_wifi_connected();
 }
+
+#if CONFIG_MUSE_AUDIO_COMMANDS
+extern "C" bool muse_hatch_audio_message_begin(const muse_audio_message_t *request)
+{
+    if (!s_cmds || !muse_hatch_ready()) return false;
+    auto *copy = static_cast<muse_audio_message_t *>(heap_caps_malloc(sizeof(*request), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!copy) return false;
+    *copy = *request;
+    uint32_t gen = ++s_gen;
+    drain_out();
+    cmd_t cmd{ CMD_AUDIO, gen, reinterpret_cast<char *>(copy) };
+    if (xQueueSend(s_cmds, &cmd, pdMS_TO_TICKS(100)) != pdTRUE) { free(copy); return false; }
+    return true;
+}
+#endif
 
 extern "C" void muse_hatch_turn_begin(void)
 {

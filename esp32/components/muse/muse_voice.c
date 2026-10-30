@@ -83,6 +83,17 @@ static volatile bool s_mp3test;
 static atomic_int s_call_view;
 static atomic_bool s_ptt_call;
 static atomic_bool s_shutdown;
+#if CONFIG_MUSE_AUDIO_COMMANDS
+typedef struct {
+    muse_audio_message_t request;
+    muse_audio_message_done_t done;
+    void *user;
+} audio_job_t;
+static QueueHandle_t s_audio_jobs;
+static atomic_bool s_audio_busy, s_audio_stop;
+static bool audio_pending(void) { return s_audio_jobs && uxQueueMessagesWaiting(s_audio_jobs); }
+#endif
+
 
 muse_voice_view_t muse_voice_call_view(void) { return atomic_load(&s_call_view); }
 bool muse_voice_in_call(void) { return muse_voice_call_view() != MUSE_VOICE_VIEW_NONE; }
@@ -418,10 +429,11 @@ static void go_idle(const char *caption);
  * Plays Hatch's reply as it arrives, with its text as the caption. Returns
  * true if interrupted by a new press. *delivered: the VM has the note.
  */
-static bool hatch_reply(bool *delivered)
+static bool hatch_reply(bool *delivered, muse_audio_message_result_t *remote)
 {
     muse_state_set_mode(MUSE_MODE_THINKING);
-    muse_state_set_caption("SENDING VOICE NOTE");   /* until there's a transcript or reply */
+    muse_state_set_caption(remote ? "LOADING AUDIO" : "SENDING VOICE NOTE");
+    if (remote) memset(remote, 0, sizeof(*remote));
     static int16_t buf[MUSE_AUDIO_CHUNK];
     static const int16_t silence[MUSE_AUDIO_CHUNK];
     char text[96];
@@ -442,7 +454,7 @@ static bool hatch_reply(bool *delivered)
             case MUSE_HATCH_EV_SENT:
                 *delivered = true;
                 if (!speaking && !replied) {
-                    muse_state_set_caption("NOTE SENT - WAITING FOR MUSE");
+                    muse_state_set_caption(remote ? "LOADING AUDIO" : "NOTE SENT - WAITING FOR MUSE");
                 }
                 break;
             case MUSE_HATCH_EV_REPLY:
@@ -459,13 +471,32 @@ static bool hatch_reply(bool *delivered)
             case MUSE_HATCH_EV_ERROR:
                 ESP_LOGW(TAG, "muse: %s", text);
                 muse_state_set_level(0);
+                if (remote) strlcpy(remote->error, text, sizeof(remote->error));
                 go_idle(text);
                 return false;
             default:
                 break;
             }
         }
+#if CONFIG_MUSE_AUDIO_COMMANDS
+        /* The agent may invoke playback while answering a BOOT note. Once
+         * the note is acknowledged, hand the speaker to that command instead
+         * of waiting for the agent which is awaiting its playback result. */
+        if (!remote && *delivered && audio_pending()) {
+            muse_hatch_turn_cancel();
+            muse_state_set_level(0);
+            return false;
+        }
+        if (remote && (atomic_load(&s_audio_stop) || atomic_load(&s_shutdown) ||
+                       !muse_settings_speaker_on() || !muse_settings_volume())) {
+            strlcpy(remote->error, "PLAYBACK STOPPED OR MUTED", sizeof(remote->error));
+            muse_hatch_turn_cancel();
+            muse_state_set_level(0);
+            return false;
+        }
+#endif
         if (got_event(MUSE_PTT_DOWN)) {
+            if (remote) strlcpy(remote->error, "INTERRUPTED BY BOOT", sizeof(remote->error));
             ESP_LOGI(TAG, "reply interrupted");
             muse_hatch_turn_cancel();
             muse_state_set_level(0);
@@ -479,7 +510,13 @@ static bool hatch_reply(bool *delivered)
                 ESP_LOGI(TAG, "reply audio after %.2fs", (esp_timer_get_time() - t0) / 1e6);
             }
             muse_state_set_level(muse_audio_level(buf, n));
-            muse_audio_write(buf, n);
+            esp_err_t written = muse_audio_write(buf, n);
+            if (remote && written != ESP_OK) {
+                strlcpy(remote->error, "SPEAKER WRITE FAILED", sizeof(remote->error));
+                muse_hatch_turn_cancel();
+                muse_state_set_level(0);
+                return false;
+            }
             played += n;
         } else if (done) {
             break;
@@ -496,7 +533,11 @@ static bool hatch_reply(bool *delivered)
     muse_state_set_level(0);
     ESP_LOGI(TAG, "muse reply: %.2fs of audio, %.2fs total", (double)played / MUSE_AUDIO_RATE,
              (esp_timer_get_time() - t0) / 1e6);
-    if (!played) {
+    if (remote) {
+        remote->frames = played;
+        if (!played) strlcpy(remote->error, "NO PLAYABLE AUDIO", sizeof(remote->error));
+    }
+    if (!played && !remote) {
         /* No speech (TTS unavailable): leave the reply text up for a moment. */
         vTaskDelay(pdMS_TO_TICKS(2500));
     }
@@ -750,7 +791,7 @@ static bool send_held(bool quiet)
     if (fed == FED && quiet) {
         delivered = wait_delivered();
     } else if (fed == FED) {
-        interrupted = hatch_reply(&delivered);
+        interrupted = hatch_reply(&delivered, NULL);
     }
     if (fed != FED || quiet) {
         muse_hatch_turn_cancel();   /* asleep, the reply is left for the app */
@@ -837,7 +878,7 @@ static bool finish_note(void)
             }
         }
         if (fed) {
-            interrupted = hatch_reply(&delivered);
+            interrupted = hatch_reply(&delivered, NULL);
         }
         if (delivered || interrupted) {
             drop_rec();
@@ -849,7 +890,7 @@ static bool finish_note(void)
 #endif
     muse_hatch_turn_end();   /* before the chirp, which takes ~90 ms */
     muse_audio_chirp(0);
-    return hatch_reply(&delivered);
+    return hatch_reply(&delivered, NULL);
 }
 
 /*
@@ -1138,6 +1179,9 @@ static void voice_task(void *arg)
             bool asleep = muse_state_asleep();
             bool battery = muse_state_on_battery();
             bool rest = asleep && battery && !s_chirp && !s_mp3test && !s_loopback;
+#if CONFIG_MUSE_AUDIO_COMMANDS
+            rest = rest && !atomic_load(&s_audio_busy);
+#endif
 #if HOLD_NOTES
             /* A press goes first: send_held() leaves it queued and returns
              * without backing off, so retrying before it's read would spin. */
@@ -1184,6 +1228,31 @@ static void voice_task(void *arg)
                 muse_audio_loopback_test(muse_settings_volume());
                 pre_reset();
             }
+#if CONFIG_MUSE_AUDIO_COMMANDS
+            audio_job_t *job = NULL;
+            if (!press_waiting() && xQueueReceive(s_audio_jobs, &job, 0) == pdTRUE) {
+                muse_audio_message_result_t result = {0};
+                bool delivered;
+                muse_input_request_wake();
+                pre_reset();
+                if (atomic_load(&s_audio_stop) || atomic_load(&s_shutdown)) {
+                    strlcpy(result.error, "PLAYBACK CANCELLED", sizeof(result.error));
+                } else if (!muse_hatch_audio_message_begin(&job->request)) {
+                    strlcpy(result.error, "MUSE CONNECTION UNAVAILABLE", sizeof(result.error));
+                } else {
+                    pending_down = hatch_reply(&delivered, &result);
+                }
+                /* Drain hardware DMA with silence before any new recording. */
+                static const int16_t silence[MUSE_AUDIO_CHUNK] = {0};
+                for (int i = 0; i < SETTLE_CHUNKS; i++) muse_audio_write(silence, MUSE_AUDIO_CHUNK);
+                pre_reset();
+                job->done(&result, job->user);
+                free(job);
+                atomic_store(&s_audio_busy, false);
+                if (!pending_down) go_idle(result.error);
+                continue;
+            }
+#endif
             /* The 20 ms read paces this loop. */
             idle_capture();
             if (xQueueReceive(s_queue, &ev, 0) != pdTRUE) {
@@ -1270,12 +1339,20 @@ esp_err_t muse_voice_start(QueueHandle_t queue)
         muse_state_set_caption("AUDIO INIT FAILED");
         return ESP_FAIL;
     }
+#if CONFIG_MUSE_AUDIO_COMMANDS
+    s_audio_jobs = xQueueCreate(1, sizeof(audio_job_t *));
+    if (!s_audio_jobs) { muse_audio_power(false); return ESP_ERR_NO_MEM; }
+#endif
     /* Stack in PSRAM if there is any (this task never writes flash) to spare internal RAM for Wi-Fi/BLE. */
     if (xTaskCreatePinnedToCoreWithCaps(voice_task, "muse_voice", 6144, NULL, 6, NULL, MUSE_AUDIO_CORE,
                                         MUSE_BIG_CAPS) != pdPASS) {
         /* Without the task nothing would ever rest the codecs, which
          * muse_audio_init() left open: on the Watcher that's ~33 mA. */
         muse_audio_power(false);
+#if CONFIG_MUSE_AUDIO_COMMANDS
+        vQueueDelete(s_audio_jobs);
+        s_audio_jobs = NULL;
+#endif
         muse_state_set_mode(MUSE_MODE_ERROR);
         muse_state_set_caption("AUDIO INIT FAILED");
         return ESP_ERR_NO_MEM;
@@ -1321,3 +1398,41 @@ bool muse_voice_notes_waiting(void)
 {
     return s_waiting;
 }
+
+#if CONFIG_MUSE_AUDIO_COMMANDS
+bool muse_voice_audio_ready(void) { return s_audio_jobs && muse_board->audio_init; }
+
+bool muse_voice_play_message(const muse_audio_message_t *request,
+                             muse_audio_message_done_t done, void *user, const char **error)
+{
+    *error = "INVALID AUDIO REQUEST";
+    if (!request || !done || !memchr(request->target, 0, sizeof(request->target)) ||
+        !memchr(request->text, 0, sizeof(request->text))) return false;
+    char path[1600];
+    if (!muse_audio_message_path(request->source, request->target, false, path, sizeof(path))) return false;
+    *error = "AUDIO NOT READY";
+    if (!muse_voice_audio_ready() || atomic_load(&s_shutdown)) return false;
+    *error = "SPEAKER MUTED";
+    if (!muse_settings_speaker_on() || !muse_settings_volume()) return false;
+    *error = "AUDIO BUSY";
+    bool expected = false;
+    if (muse_voice_in_call() || !atomic_compare_exchange_strong(&s_audio_busy, &expected, true)) return false;
+    atomic_store(&s_audio_stop, false);
+    audio_job_t *job = heap_caps_malloc(sizeof(*job), MUSE_BIG_CAPS);
+    if (job) {
+        job->request = *request;
+        job->done = done;
+        job->user = user;
+        if (xQueueSend(s_audio_jobs, &job, 0) == pdTRUE) {
+            muse_state_nudge();
+            return true;
+        }
+        free(job);
+    }
+    atomic_store(&s_audio_busy, false);
+    *error = "AUDIO QUEUE UNAVAILABLE";
+    return false;
+}
+
+void muse_voice_stop_message(void) { atomic_store(&s_audio_stop, true); muse_state_nudge(); }
+#endif

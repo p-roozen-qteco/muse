@@ -17,6 +17,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "muse_audio_message.h"
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -74,3 +75,10 @@ bool muse_voice_resting(void);
 /* Voice notes recorded out of Hatch's reach wait to go, the oldest from the
  * last half hour: worth keeping Wi-Fi up for. */
 bool muse_voice_notes_waiting(void);
+
+/* Paired-VM audio messages. A successful enqueue owns its copy and calls done
+ * exactly once on the voice task, after playback or failure. */
+bool muse_voice_audio_ready(void);
+bool muse_voice_play_message(const muse_audio_message_t *request,
+                             muse_audio_message_done_t done, void *user, const char **error);
+void muse_voice_stop_message(void);

@@ -53,6 +53,7 @@
 #endif
 
 static atomic_uint s_touch_talk_events;
+static atomic_bool s_requested_wake;
 
 void muse_input_touch_talk(bool pressed)
 {
@@ -623,6 +624,7 @@ static void input_task(void *arg)
             aux_key(aux_down, false);
         }
 
+        if (atomic_exchange(&s_requested_wake, false)) set_asleep(false, "audio message");
         if (s_power_off_requested) {
             s_power_off_requested = false;
             power_off();
@@ -921,3 +923,5 @@ void muse_input_request_power_off(void)
 {
     s_power_off_requested = true;
 }
+
+void muse_input_request_wake(void) { atomic_store(&s_requested_wake, true); }
