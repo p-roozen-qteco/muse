@@ -108,3 +108,9 @@ flashen opgeslagen verzorgingsvelden zijn exact teruggekomen. Volume 100,
 speaker aan, microfoonversterking 30 dB, helderheid 50 en slaapinstelling 0 zijn
 behouden. Dit bevestigt de softwarestart en sensoridentiteit, nog niet de
 fysieke kantelrichting of het hoorbare antwoord tijdens dit spel.
+
+De nieuwe USB-observatie is gestart op **30 oktober 2026 om 16:15 CET** en loopt
+maximaal tot **31 oktober om 16:15 CET**. De eerste status-/powermeting is geslaagd.
+De geplande opvolging is hervat voor deze nieuwe meetronde. De fysieke
+spel-/audiovragen zijn nog niet beantwoord; dit wordt niet als goedgekeurd
+geboekt. Accu-ontlading is nog niet getest.
