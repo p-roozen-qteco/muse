@@ -74,6 +74,8 @@ was byte-identical before and after restoration. The owner supplied a new
 screenshot from that comparison: the app returned an answer and displayed an
 audio player, while transcription errors remained. A screenshot alone does not
 confirm that the audio plays or establish what words were actually spoken.
+The owner subsequently confirmed that the reply was audible in the phone app
+and that the arithmetic operator was transcribed correctly.
 
 The new candidate is `999.0.0-s3audio-test2`. Computer validation exercises the
 real registration builder, command validation and asynchronous completion,
@@ -87,10 +89,19 @@ and four optional dependency checks were skipped.
 The candidate was then installed on the first board after another full 16 MB
 backup. All four writes verified, NVS was unchanged, and USB status confirmed
 `999.0.0-s3audio-test2`, Wi-Fi connected and Muse online. Speaker, volume,
-microphone gain and screen settings were preserved. An actual Muse-generated
-spoken message, advertised-command use and Dutch transcription still require
-acceptance on the first board. A local MP3 test alone does not
-prove the complete Muse-to-speaker route.
+microphone gain and screen settings were preserved.
+
+On 30 October 2026 the owner confirmed an actual Muse reply was audible from
+the ESP32. The device log records `audio.play_file`, MP3 input at 24 kHz mono /
+64 kbps, and 2.64 seconds of audio written to the existing 16 kHz speaker path.
+This confirms the app-to-gadget audio route on one board. Visible captions and
+the complete BOOT-question-to-spoken-reply route remain to be checked together;
+Dutch transcription quality and extended stability are not yet accepted.
+
+Earlier that day the owner reported a dark screen. USB still enumerated, but
+status and a screen-wake request received no reply. A watchdog reset restored
+Muse online and the owner confirmed the screen visible, without rewriting
+firmware. The cause was not established; no pre-reset crash evidence was captured.
 
 Personal firmware, credentials, backups and raw conversation logs stay local.
 
