@@ -328,7 +328,11 @@ class HatchVoiceNote(NoteRequestAssertions, unittest.TestCase):
 /* Not assert(): the fakes must still check under -DNDEBUG. */
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); exit(3); } } while (0)
 typedef struct fake_stream *StreamBufferHandle_t;
-''' + constants + line('enum kind_t') + line('enum mark_t') + types + HATCH_DRIVER + note + HATCH_MAIN
+''' + constants + line('enum kind_t') + line('enum mark_t') + types + HATCH_DRIVER + getattr(cls, 'EXTRA_DRIVER', '') + note + HATCH_MAIN
+        if getattr(cls, 'AUTO', False):
+            code = '#define CONFIG_MUSE_AUTO_AUDIO_REPLIES 1\n' + code
+            code = code.replace('bool ok = open_note();',
+                                's_turn.auto_audio = getenv("AUTO_AUDIO") != nullptr; bool ok = open_note();')
         (out / 'note.cpp').write_text(code)
         flags = ['-Wall', '-Wextra', '-Werror', *SANITIZE,
                  '-I', str(ROOT / 'tests'), '-I', str(MUSE),
@@ -349,10 +353,10 @@ typedef struct fake_stream *StreamBufferHandle_t;
                 raise AssertionError(result.stdout + result.stderr)
         cls.binary = out / 'note'
 
-    def record(self, pcm, step, release=True, sched=()):
+    def record(self, pcm, step, release=True, sched=(), env=None):
         ran = subprocess.run([str(self.binary), str(step), '1' if release else '0',
                               ','.join(map(str, sched)) or '-'],
-                             input=pcm, capture_output=True, env=ENV)
+                             input=pcm, capture_output=True, env={**ENV, **(env or {})})
         self.assertEqual(ran.returncode, 0, ran.stderr.decode(errors='replace'))
         self.assertEqual(ran.stderr, b'')
         return parse_run(ran.stdout)
@@ -403,5 +407,47 @@ typedef struct fake_stream *StreamBufferHandle_t;
         self.assert_sent(run, pcm[:20 * self.MIC])
 
 
-if __name__ == '__main__':
+
+
+class AutomaticAudioNote(HatchVoiceNote):
+    """Replay every streaming/PCM test with the option compiled in but inactive,
+    then exercise actual routed, muted and invalid-destination requests."""
+    AUTO = True
+    EXTRA_DRIVER = r'''
+static bool muse_settings_speaker_on() { return !getenv("MUTED"); }
+static int muse_settings_volume() { return getenv("ZERO_VOLUME") ? 0 : 50; }
+static const char *muse_link_node_id() {
+    const char *id = getenv("NODE_ID"); return id ? id : "homelink-78b940";
+}
+'''
+
+    def test_routed_request_preserves_wav_and_stream_boundaries(self):
+        pcm = pcm_bytes(64000, 91)
+        run = self.record(pcm, 320, env={"AUTO_AUDIO": "1"})
+        body = json.loads(run['body'])
+        self.assertEqual(body['output_modality'], 'text')
+        self.assertIn('homelink-78b940', body['message'])
+        self.assertIn('audio.play_file', body['message'])
+        self.assertIn("user's language", body['message'])
+        self.assertEqual(base64.b64decode(body['items'][0]['data_base64']), riff_header(16000) + pcm)
+        self.assertEqual(run['parts'][1:], expected_parts(len(pcm) + 44, 6144, 8192)[1:])
+        self.assertEqual(run['body_sent'], len(run['body']))
+        self.assertEqual(run['ends'], [False] * (len(run['parts']) - 1) + [True])
+
+    def test_muted_zero_volume_and_invalid_identity_keep_original_request(self):
+        pcm = pcm_bytes(16000, 92)
+        cases = [{"MUTED": "1"}, {"ZERO_VOLUME": "1"}]
+        cases += [{"NODE_ID": node} for node in ('', 'homelink-other', 'homelink-78b94X',
+                   'homelink-78b94"', 'homelink-78b940 trailing', 'a' * 4096)]
+        for case in cases:
+            with self.subTest(case=case):
+                self.assert_sent(self.record(pcm, 320, env={"AUTO_AUDIO": "1", **case}), pcm)
+
+    def test_independent_gadgets_route_to_their_own_identity(self):
+        for node in ('homelink-000000', 'homelink-abcdef', 'homelink-123456'):
+            run = self.record(pcm_bytes(16000, 2), 1024, env={"AUTO_AUDIO": "1", "NODE_ID": node})
+            self.assertIn('gadget ' + node + '.', json.loads(run['body'])['message'])
+
+
+if __name__ == "__main__":
     unittest.main()

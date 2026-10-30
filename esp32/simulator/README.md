@@ -195,3 +195,12 @@ the bad line.
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for the desktop dependency versions and
 licenses.
+
+### S3 1.8 companion preview
+
+Use `--board s3-18` for the 368×448 rectangular layout (the default remains
+`watcher`). Scenario files also accept `touch=down,X,Y`, `touch=move,X,Y` and
+`touch=up,X,Y` in screen pixels, with `advance=40` or more between events. These
+use the actual SDL/LVGL input path. `page=face` and `page=settings` select a tile
+for comparison tests. Touch reactions use the production companion controller;
+recording, speaker and network services remain simulator stubs.

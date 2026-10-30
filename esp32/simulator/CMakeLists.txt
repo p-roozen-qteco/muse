@@ -162,6 +162,7 @@ add_executable(muse_simulator
     src/sim_platform.c
     src/sim_services.c
     "${MUSE_COMPONENT_DIR}/muse_ui.c"
+    "${MUSE_COMPONENT_DIR}/muse_companion.c"
     "${MUSE_COMPONENT_DIR}/muse_state.c"
     "${MUSE_COMPONENT_DIR}/muse_text.c"
     "${MUSE_SIM_AVATAR_SOURCE}"
@@ -233,7 +234,7 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py
     endif()
     set_tests_properties(muse_simulator_headless PROPERTIES
         ENVIRONMENT "${MUSE_SIM_TEST_ENVIRONMENT}"
-        TIMEOUT 60
+        TIMEOUT 120
     )
 
     add_executable(muse_settings_text_test

@@ -317,6 +317,11 @@ static float eyes_update(const muse_pose_t *p, float dt)
     }
 
     float tgx = e->tgx, tgy = e->tgy;
+    if (p->mode == MUSE_MODE_IDLE) {
+        float attention = clampf(p->attention, 0, 1);
+        tgx += (clampf(p->gaze_x, -1, 1) - tgx) * attention;
+        tgy += (clampf(p->gaze_y, -1, 1) - tgy) * attention;
+    }
     switch (p->mode) {
     case MUSE_MODE_LISTENING:
         tgx = 0;
@@ -892,7 +897,8 @@ void muse_pixel_render(const muse_pose_t *p)
     muse_mode_t mode = p->mode;
     /* Powering down: the avatar waves, then nods off as the glow fades. */
     float fade = mode == MUSE_MODE_OFF ? clampf(1.0f - p->mode_t / 1.3f, 0, 1) : 1.0f;
-    float happy = p->happy;
+    /* A pet must never replace the speaking mouth or listening expression. */
+    float happy = mode == MUSE_MODE_IDLE ? p->happy : 0;
     float level = p->level;
     float t = p->t;
 
@@ -925,6 +931,7 @@ void muse_pixel_render(const muse_pose_t *p)
     if (happy > 0) {
         hop = fabsf(sinf(t * 9.0f)) * 3.0f * happy;
     }
+    if (mode == MUSE_MODE_IDLE) lean += s_eyes.gx * clampf(p->attention, 0, 1) * 1.5f;
 
     /* Boot: the avatar pops up from a squash, then opens their eyes. */
     float boot = mode == MUSE_MODE_BOOT ? clampf(p->mode_t / 1.4f, 0, 1) : 1.0f;
@@ -1042,13 +1049,18 @@ void muse_pixel_render(const muse_pose_t *p)
     default:
         break;
     }
-    if (happy > 0.2f && mode != MUSE_MODE_ERROR) {
+    if (happy > 0.2f) {
         style = EYES_HAPPY;
         mouth = MOUTH_GRIN;
     }
 
+    /* The first tap is a wink; leave one eye open so it reads as a wink,
+     * then settle into the happy expression. */
+    float wink = mode == MUSE_MODE_IDLE ? clampf(p->wink, 0, 1) : 0;
+    if (wink > 0) style = EYES_NORMAL;
+
     draw_eye(j.fx - eye_dx, eye_y, open, style, s_eyes.gx, s_eyes.gy);
-    draw_eye(j.fx + eye_dx, eye_y, open, style, s_eyes.gx, s_eyes.gy);
+    draw_eye(j.fx + eye_dx, eye_y, open * (1 - wink), style, s_eyes.gx, s_eyes.gy);
 
     /* Tiny brows for the expressive states. */
     int bl = iround(j.fx - eye_dx), br = iround(j.fx + eye_dx), by = iround(eye_y) - 4;

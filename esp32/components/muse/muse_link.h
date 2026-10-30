@@ -78,6 +78,7 @@ typedef struct {
     void (*ble_quiet)(bool quiet);                /* a Wi-Fi video stream: no BLE advertising until false */
     int (*wifi_saved)(muse_wifi_saved_t *out, int max);   /* most recently joined first */
     void (*wifi_forget)(const char *ssid);        /* one saved network; empty forgets them all */
+    const char *(*node_id)(void);                /* stable gadget command destination, RAM string */
 } muse_link_ops_t;
 
 /* Pauses BLE advertising (setup's, or the companion's) while a Wi-Fi video
@@ -94,6 +95,7 @@ muse_link_state_t muse_link_state(void);
 const char *muse_link_state_name(muse_link_state_t state);
 
 bool muse_link_hatch_linked(void);
+const char *muse_link_node_id(void);
 const char *muse_link_sdk_token(void);
 bool muse_link_sdk_token_set(const char *token);
 bool muse_link_sdk_token_changed(void);

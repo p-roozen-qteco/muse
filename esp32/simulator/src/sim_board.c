@@ -16,6 +16,7 @@
 
 #include "sim_board.h"
 #include "sim_platform.h"
+#include <string.h>
 
 #include "src/drivers/sdl/lv_sdl_mouse.h"
 #include "src/drivers/sdl/lv_sdl_window.h"
@@ -23,6 +24,7 @@
 #define WATCHER_RESOLUTION 412
 
 static lv_display_t *s_display;
+static bool s_s3_18;
 
 /* muse_ui.c reads the selected board through this production global. */
 const muse_board_t *muse_board;
@@ -34,14 +36,14 @@ static esp_err_t sim_init(void)
 
 static lv_display_t *sim_display_start(lv_indev_t **touch)
 {
-    s_display = lv_sdl_window_create(WATCHER_RESOLUTION, WATCHER_RESOLUTION);
+    s_display = lv_sdl_window_create(muse_board->width, muse_board->height);
     if (!s_display) {
         return NULL;
     }
     /* The SDL driver installs SDL_GetTicks. Use the simulator clock instead so
      * scripted runs can advance time without sleeping and render repeatably. */
     lv_tick_set_cb(sim_time_tick_ms);
-    lv_sdl_window_set_title(s_display, "Muse Gadget Simulator");
+    lv_sdl_window_set_title(s_display, muse_board->name);
     lv_sdl_window_set_resizeable(s_display, false);
     if (touch) {
         *touch = lv_sdl_mouse_create();
@@ -96,7 +98,27 @@ static const muse_board_t s_sim_board = {
 
 const muse_board_t *sim_board_get(void)
 {
+    if (s_s3_18) {
+        static muse_board_t board;
+        board = s_sim_board;
+        board.name = "Waveshare S3 AMOLED 1.8 Simulator";
+        board.width = 368;
+        board.height = 448;
+        board.round = false;
+        board.diagonal_in = 1.8f;
+        board.talk_button = "boot";
+        board.aux_button = "pwr";
+        board.talk_hint = (muse_button_hint_t){0};
+        return &board;
+    }
     return &s_sim_board;
+}
+
+bool sim_board_select(const char *name)
+{
+    if (strcmp(name, "watcher") && strcmp(name, "s3-18")) return false;
+    s_s3_18 = !strcmp(name, "s3-18");
+    return true;
 }
 
 lv_display_t *sim_board_display(void)

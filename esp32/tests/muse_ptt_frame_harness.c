@@ -49,6 +49,8 @@ muse_voice_view_t muse_voice_call_view(void) { return view; }
 void muse_pixel_render(const muse_pose_t *pose) { rendered=*pose; }
 
 /* The test runner copies the complete production frame_tick function here. */
+/* Companion feature is disabled in this StopWatch voice harness. */
+#define companion_cancel() ((void)0)
 #include "muse_ptt_frame.inc"
 
 int main(int argc,char **argv)
