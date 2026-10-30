@@ -1038,7 +1038,7 @@ static void build_screen(void)
     int meter_y = cap_top - 6 - METER_SEG_PX / 2;
     int art_bottom = meter_y - METER_SEG_PX / 2 - 4;
     s_big_y = s_small ? 0 : art_bottom - (s_canvas_px / 2 - ART_BLANK_ROWS * (s_canvas_px / MUSE_PX_W));
-    if(s_pet_layout) s_big_y=-18;
+    if(s_pet_layout) s_big_y=-40;
 
     /* The character. */
     muse_image_init();
@@ -1912,7 +1912,7 @@ esp_err_t muse_ui_start(void)
     if (muse_board->avatar_px > 0) {
         s_canvas_px = muse_board->avatar_px;
     }
-    if(s_pet_layout) s_canvas_px=288;
+    if(s_pet_layout) s_canvas_px=264;
     if (s_canvas_px > s_w) {
         s_canvas_px = s_w / MUSE_PX_W * MUSE_PX_W;
     }
