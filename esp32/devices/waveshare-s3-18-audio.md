@@ -94,9 +94,14 @@ microphone gain and screen settings were preserved.
 On 30 October 2026 the owner confirmed an actual Muse reply was audible from
 the ESP32. The device log records `audio.play_file`, MP3 input at 24 kHz mono /
 64 kbps, and 2.64 seconds of audio written to the existing 16 kHz speaker path.
-This confirms the app-to-gadget audio route on one board. Visible captions and
-the complete BOOT-question-to-spoken-reply route remain to be checked together;
-Dutch transcription quality and extended stability are not yet accepted.
+This confirms the app-to-gadget audio route on one board. Later on the same
+day, the owner also confirmed that a question spoken while holding BOOT,
+explicitly requesting audio and displayed text, produced both sound and text
+on the ESP32. This accepts the core microphone-to-Muse-to-speaker-and-caption
+flow on the first board. That second result is owner-confirmed; USB was no
+longer connected for an independent trace of it. It does not establish
+word-for-word Dutch transcription accuracy, automatic audio for every future
+reply, or extended stability.
 
 Earlier that day the owner reported a dark screen. USB still enumerated, but
 status and a screen-wake request received no reply. A watchdog reset restored
