@@ -140,3 +140,8 @@ Meerdaagse stabiliteit en batterijduur blijven afzonderlijke duurproeven.
 Zie [de herstartproef, grotere knoppen en duurmetingen](waveshare-s3-18-soak.md)
 voor de opvolgende kandidaat `999.0.0-s3tama-test2`. De resultaten hierboven
 blijven de acceptatie van test1.
+
+## Vervolg: Rood balletje
+
+De volgende kandidaat voegt een spelkeuze en kantelen met de ingebouwde
+bewegingssensor toe. Zie [bediening, sensor en validatie](waveshare-s3-18-balance.md).

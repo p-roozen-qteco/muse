@@ -23,3 +23,6 @@
 const muse_board_t *sim_board_get(void);
 bool sim_board_select(const char *name);
 lv_display_t *sim_board_display(void);
+
+void sim_board_motion(float x,float y,float z,bool valid,bool stale);
+bool sim_board_motion_enabled(void);

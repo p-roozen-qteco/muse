@@ -226,3 +226,10 @@ food, rest, affection, restart, malformed-record preservation, game completion,
 interruption by conversation, sleep and navigation. The full host suite also
 checks the real raster under ASan/UBSan, cropped/strip output, memory-allocation
 failure, and persistent state/game invariants.
+
+With `MUSE_SIM_PET=ON` on `--board s3-18`, **Spelen** opens the game picker.
+`tilt=0.2,-0.1,0.97` supplies gravity in g in portrait screen axes; `tilt=missing`
+and `tilt=stale` exercise failed/old samples. The default is level (`0,0,1`).
+`pet=status` also emits an `@balance` record (phase, position, elapsed playing
+milliseconds, sensor request and panel visibility). This controls the production
+balance UI/physics; it does not emulate the physical sensor bus or audio.
