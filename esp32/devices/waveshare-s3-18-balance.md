@@ -151,3 +151,20 @@ expliciete verbindingsfout. Dat weerspreekt de gemelde spelfout niet: die
 statusproef test geen zichtbaarheid of sensorcorrectheid. De duurtestopvolging
 blijft gepauzeerd tot de fysieke start-/kantelproef is afgerond. De eerdere
 verwachte eindtijd van 31 oktober 16:15 geldt niet meer.
+
+### Test4: uitgevoerde controles en installatie
+
+- **948 hosttests:** 944 geslaagd, 4 bestaande skips. De negen sensortests
+  bevatten nu bytevolgorde, terugleesfout en de volledige sensor/ijkingroute.
+- **13 simulatorcontroles geslaagd**, waaronder zichtbaar rood balletje tijdens
+  ijken en fouten, spelen, verzorgen, opslag, spraakvoorrang en navigatie.
+- S3 1.8 en S3 2.16 bouwen op IDF 6.0.1; de S3 1.8-app blijft 2.166.784 bytes.
+  De partitietabel is ongewijzigd.
+- Test4 is op de S3 geïnstalleerd na een verse volledige 16 MB-back-up. Vier
+  segmenten geverifieerd, opstart bereikt `starting`, sensor meldt gecontroleerde
+  little-endian instelling, alle tien opgeslagen verzorgingsvelden exact
+  hersteld en de bestaande gebruikersinstellingen behouden. Wi-Fi/Muse/Link
+  zijn online; de opstartlog bevat geen crashmeldingen.
+
+De fysieke start-/kantelproef en hoorbare BOOT-reactie zijn nog niet bevestigd.
+De duurtest blijft gepauzeerd; test4 krijgt na die controle een eigen meetronde.
