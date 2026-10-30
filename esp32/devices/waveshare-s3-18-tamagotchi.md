@@ -112,7 +112,25 @@ Bij een tweede gecontroleerde start zijn alle **33 eerder aanwezige NVS-records*
 bytegetrouw behouden (de nieuwe pet-naamruimte is apart). Ook deze start bereikt
 `starting` en de online Muse-/Link-verbinding zonder crashmeldingen.
 
-Deze resultaten zijn bouw-, simulator- en USB-waarnemingen. De fysieke
-bevestiging van nieuw uiterlijk/verzorging/spel en gelijktijdig werkende
-microfoon/audio is nog afzonderlijk nodig. Meerdaagse duurproeven zijn niet
-uitgevoerd.
+Bovenstaande resultaten zijn bouw-, simulator- en USB-waarnemingen. De
+bevestiging op het fysieke apparaat staat hieronder. Meerdaagse duurproeven
+zijn niet uitgevoerd.
+
+## Bevestiging door de eigenaar, 30 oktober 2026
+
+Op `999.0.0-s3tama-test1` heeft de eigenaar beide functieproeven bevestigd:
+
+- Het zachte crèmekleurige karakter is zichtbaar; **Eten**, **Rust/Wakker** en
+  **Spelen** werken.
+- Vanuit het geopende spel sluit BOOT het spel en kan de eigenaar een vraag
+  inspreken. Het antwoord komt vanzelf als **geluid én tekst** terug op de S3,
+  terwijl het scherm blijft reageren.
+
+Deze bevestiging komt van de eigenaar. De eerdere twee minuten USB-observatie
+bevatten geen nieuwe opname- of audiocommando's en leveren daarvoor geen apart
+logbewijs. Er is voor deze bevestiging geen firmware gewijzigd of opnieuw
+geïnstalleerd.
+
+Het terugkomen van verzorgingswaarden na een fysieke herstart is nog niet door
+de eigenaar bevestigd; bewaren en herstellen zijn wel geautomatiseerd getest.
+Meerdaagse stabiliteit en batterijduur blijven afzonderlijke duurproeven.
