@@ -26,6 +26,7 @@
 
 struct test_queue { muse_input_event_t items[64]; int n; } queue;
 static int scenario, frame, starts, ends, allocations, notes, writes, delivered, tail_reads;
+static int note_cancels, note_ends, note_fail_frame, note_release_frame;
 static int64_t clock_us;
 static int talk_edges;
 static bool talk_values[64];
@@ -121,11 +122,11 @@ float muse_audio_dbfs(const int16_t *p,size_t n) { (void)n; return (float)p[0]/1
 float muse_audio_level(const int16_t *p,size_t n) { assert(n); return (float)p[0]/1000; }
 
 /* Legacy path is a tripwire, not another implementation of the note engine. */
-void muse_hatch_turn_begin(void) { ++notes; if(scenario>=20) longjmp(finish,2); assert(!"PTT opened a note"); }
+void muse_hatch_turn_begin(void) { ++notes; if(scenario>=42) return; if(scenario>=20) longjmp(finish,2); assert(!"PTT opened a note"); }
 void muse_hatch_turn_audio(const int16_t *p,size_t n) { (void)p;(void)n; }
 size_t muse_hatch_turn_audio_wait(const int16_t *p,size_t n,int ms) { (void)p;(void)ms;return n; }
-void muse_hatch_turn_end(void) {}
-void muse_hatch_turn_cancel(void) {}
+void muse_hatch_turn_end(void) { ++note_ends; }
+void muse_hatch_turn_cancel(void) { ++note_cancels; }
 muse_hatch_ev_t muse_hatch_turn_event(char *p,size_t n) { (void)p;(void)n;return MUSE_HATCH_EV_NONE; }
 bool muse_hatch_turn_caption(size_t x,char *p,size_t n) { (void)x;(void)p;(void)n;return false; }
 size_t muse_hatch_turn_read(int16_t *p,size_t n,int ms) { (void)p;(void)n;(void)ms;return 0; }
@@ -214,6 +215,12 @@ muse_voice_call_ev_t muse_voice_call_event(char *p,size_t n) {
 
 esp_err_t muse_audio_read(int16_t *p,size_t n) {
     ++frame; clock_us+=scenario==41?0:scenario==22?1000:20000; assert(frame<1200);
+    if(scenario>=42) {
+        if(scenario==48 && strstr(caption,"MICROPHONE ERROR")) longjmp(finish,1);
+        if(frame==note_release_frame) push(MUSE_PTT_UP);
+        for(size_t i=0;i<n;i++) p[i]=(int16_t)(100+frame);
+        return frame==note_fail_frame?ESP_FAIL:ESP_OK;
+    }
     if(scenario==41 && frame==2) push(MUSE_PTT_UP);
     if(scenario>=22 && scenario<=28) {
         if(frame==2) push(MUSE_PTT_UP);
@@ -265,6 +272,35 @@ esp_err_t muse_audio_write(const int16_t *p,size_t n) {
 int main(int argc,char **argv) {
     assert(argc==2); scenario=atoi(argv[1]); s_queue=input_queue=&queue; ready=true;
     s_pre=calloc(PRE_CHUNKS,sizeof(*s_pre));
+    if(scenario>=42) {
+        notes_mode=true;
+        if(scenario==48) {
+            note_fail_frame=22; push(MUSE_PTT_DOWN);
+            if(!setjmp(finish)) voice_task(NULL);
+            assert(note_cancels==1 && !note_ends && !s_rec && !s_held_count && !s_pre_fill);
+            assert(mode==MUSE_MODE_IDLE && strstr(caption,"MICROPHONE ERROR"));
+            free(s_pre); return 0;
+        }
+        s_rec=malloc(MAX_FRAMES*sizeof(*s_rec));
+        note_fail_frame=scenario==42?1:scenario==44?3:21;
+        if(scenario==45) { s_pre_fill=PRE_CHUNKS; }
+        if(scenario==46) ready=false;
+        size_t recorded=0; char why[96]={0};
+        assert(!record(scenario==44,&recorded,why,sizeof(why)));
+        assert(strstr(why,"MICROPHONE ERROR") && !s_live && !note_ends);
+        assert(note_cancels==(scenario==46?0:1));
+        assert(recorded==(scenario==42 || scenario==44 ? 0 : 6400));
+        drop_rec(); pre_reset();
+        if(scenario==47) {
+            /* A transient read error does not poison the next complete note. */
+            frame=0; note_fail_frame=0; note_release_frame=20; queue.n=0;
+            s_rec=malloc(MAX_FRAMES*sizeof(*s_rec));
+            assert(record(false,&recorded,why,sizeof(why)));
+            assert(recorded==26*MUSE_AUDIO_CHUNK && s_rec_n==recorded && s_live);
+            drop_rec();
+        }
+        free(s_pre); return 0;
+    }
     if (scenario>=20 && scenario<=21) {
         notes_mode=scenario==21; terminate_task=true; push(MUSE_PTT_DOWN); push(MUSE_PTT_UP);
         int outcome=setjmp(finish);

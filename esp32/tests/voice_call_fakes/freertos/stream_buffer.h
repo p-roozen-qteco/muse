@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 StreamBufferHandle_t xStreamBufferCreateWithCaps(size_t size, size_t trigger, uint32_t caps);
+void vStreamBufferDeleteWithCaps(StreamBufferHandle_t s);
 size_t xStreamBufferSend(StreamBufferHandle_t s, const void *data, size_t len, TickType_t wait);
 size_t xStreamBufferReceive(StreamBufferHandle_t s, void *data, size_t len, TickType_t wait);
 size_t xStreamBufferSpacesAvailable(StreamBufferHandle_t s);

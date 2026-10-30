@@ -1,5 +1,9 @@
 # Waveshare S3 1.8 V2: audio-message playback
 
+The follow-up [startup and voice recovery changes](waveshare-s3-18-stability.md)
+preserve this audio2 behavior while handling failed initialization, dropped
+completion signals and incomplete microphone captures.
+
 The S3 1.8 profile advertises `audio.play_file`, `audio.play_reply` and
 `audio.stop` to Muse. The first command plays a private MP3 from the connected
 Muse VM, optionally with its transcript on screen. This gives Muse an explicit

@@ -20,6 +20,7 @@ class VoiceAudioMessage(unittest.TestCase):
         src = (ROOT / 'components/muse/muse_voice.c').read_text()
         start = src.index('static bool hatch_reply(')
         player = src[start:src.index('\n}\n', start) + 3]
+        limit = next(line for line in src.splitlines() if line.startswith('#define REPLY_WAIT_MAX_US'))
         code = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -46,12 +47,14 @@ static void host_log(const char *tag,const char *fmt,...) { (void)tag; (void)fmt
 #define ESP_LOGW(...) host_log(__VA_ARGS__)
 static atomic_bool s_audio_stop, s_shutdown;
 static bool enabled=true, pending, interrupt, write_fails, input_error;
+static bool no_events, lose_done, caption_storm;
 static int volume=35, event_step, writes, reads, cancels, polls;
 static int64_t clock_us;
+static int64_t clock_step=20000;
 static bool audio_pending(void) { return pending; }
 static bool muse_settings_speaker_on(void) { return enabled; }
 static int muse_settings_volume(void) { return volume; }
-static int64_t esp_timer_get_time(void) { clock_us+=20000; return clock_us; }
+static int64_t esp_timer_get_time(void) { clock_us+=clock_step; return clock_us; }
 static void muse_state_set_mode(int n) { (void)n; }
 static void muse_state_set_caption(const char *fmt,...) { (void)fmt; }
 static void muse_state_set_level(float n) { (void)n; }
@@ -62,20 +65,23 @@ static void vTaskDelay(int n) { (void)n; }
 static bool got_event(int n) { (void)n; assert(++polls<100); return interrupt; }
 void muse_hatch_turn_cancel(void) { cancels++; }
 muse_hatch_ev_t muse_hatch_turn_event(char *text,size_t cap) {
+    if (no_events) return MUSE_HATCH_EV_NONE;
+    if (caption_storm) { strlcpy(text,"progress",cap); return MUSE_HATCH_EV_REPLY; }
     if (input_error) { input_error=false; strlcpy(text,"DOWNLOAD FAILED",cap); return MUSE_HATCH_EV_ERROR; }
     if (event_step==0) { event_step++; return MUSE_HATCH_EV_SENT; }
     if (event_step==1) { event_step++; strlcpy(text,"Dit is een antwoord.",cap); return MUSE_HATCH_EV_REPLY; }
-    if (reads && event_step==2) { event_step++; return MUSE_HATCH_EV_DONE; }
+    if (!lose_done && reads && event_step==2) { event_step++; return MUSE_HATCH_EV_DONE; }
     return MUSE_HATCH_EV_NONE;
 }
 size_t muse_hatch_turn_read(int16_t *pcm,size_t frames,int wait_ms) {
     (void)wait_ms;
+    if (no_events) return 0;
     if (reads++) return 0;
     for (size_t i=0;i<frames;i++) pcm[i]=100;
     return frames;
 }
 bool muse_hatch_turn_caption(size_t played,char *out,size_t cap) { (void)played; strlcpy(out,"Dit is een antwoord.",cap); return true; }
-''' + player + r'''
+''' + limit + '\n' + player + r'''
 int main(int argc,char **argv) {
     assert(argc==2); bool delivered=false;
     muse_audio_message_result_t r={0};
@@ -101,6 +107,22 @@ int main(int argc,char **argv) {
     case 6:
         atomic_store(&s_audio_stop,true); assert(!hatch_reply(&delivered,&r));
         assert(!r.frames && r.error[0] && writes==0 && cancels==1); break;
+    case 7:
+        no_events=true; clock_step=60000000;
+        assert(!hatch_reply(&delivered,&r));
+        assert(!delivered && strstr(r.error,"TIMED OUT") && cancels==1); break;
+    case 8:
+        lose_done=true; clock_step=60000000;
+        assert(!hatch_reply(&delivered,&r));
+        assert(delivered && strstr(r.error,"TIMED OUT") && writes>0 && cancels==1); break;
+    case 9:
+        lose_done=true; clock_step=60000000;
+        assert(!hatch_reply(&delivered,NULL));
+        assert(delivered && cancels==1); break;
+    case 10:
+        caption_storm=true; clock_step=60000000;
+        assert(!hatch_reply(&delivered,&r));
+        assert(strstr(r.error,"TIMED OUT") && cancels==1); break;
     default: return 2;
     }
 }
@@ -125,3 +147,7 @@ int main(int argc,char **argv) {
     def test_acknowledged_boot_note_hands_off_to_agent_audio_command(self): self.check(4)
     def test_speaker_failure_cancels_stream(self): self.check(5)
     def test_stop_command_cancels_stream(self): self.check(6)
+    def test_no_worker_response_has_bounded_wait(self): self.check(7)
+    def test_missing_completion_after_audio_has_bounded_wait(self): self.check(8)
+    def test_normal_boot_reply_also_has_timeout_backstop(self): self.check(9)
+    def test_caption_storm_cannot_starve_deadline(self): self.check(10)

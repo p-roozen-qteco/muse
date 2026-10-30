@@ -98,6 +98,14 @@ class StopWatchPTT(unittest.TestCase):
     def test_release_tail_is_sample_bounded_even_with_fast_reads(self):
         self.run_case('voice', 22)
 
+    def test_voice_note_microphone_failure_discards_partial_upload(self):
+        for scenario in (42, 43, 44, 45, 46, 47, 48):
+            with self.subTest(scenario=scenario):
+                self.run_case('voice', scenario, board=0)
+
+    def test_microphone_failure_cleanup_without_realtime_feature(self):
+        self.run_case('voice', 48, board=1, realtime=0)
+
     def test_failed_tail_reads_cannot_extend_release_deadline(self):
         self.run_case('voice', 23)
 
