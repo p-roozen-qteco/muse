@@ -36,6 +36,11 @@ option(MUSE_SIM_FETCH_DEPS
        ON)
 option(MUSE_SIM_SANITIZERS "Build the simulator with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(MUSE_SIM_WARNINGS_AS_ERRORS "Treat simulator warnings as errors" OFF)
+option(MUSE_SIM_PET "Preview the persistent pet and care/game UI" OFF)
+option(MUSE_SIM_SOFT_AVATAR "Use the soft shaded default avatar" OFF)
+if(MUSE_SIM_PET)
+    set(MUSE_SIM_SOFT_AVATAR ON)
+endif()
 
 set(MUSE_SIM_LVGL_VERSION "9.5.0")
 set(MUSE_SIM_SDL_MIN_VERSION "2.0.18")
@@ -152,6 +157,8 @@ file(GLOB MUSE_SIM_CUSTOM_AVATAR CONFIGURE_DEPENDS
      "${MUSE_COMPONENT_DIR}/avatar/muse_pixel.c")
 if(MUSE_SIM_CUSTOM_AVATAR)
     set(MUSE_SIM_AVATAR_SOURCE "${MUSE_COMPONENT_DIR}/avatar/muse_pixel.c")
+elseif(MUSE_SIM_SOFT_AVATAR)
+    set(MUSE_SIM_AVATAR_SOURCE "${MUSE_COMPONENT_DIR}/../../avatar/muse_soft.c")
 else()
     set(MUSE_SIM_AVATAR_SOURCE "${MUSE_COMPONENT_DIR}/../../avatar/muse_pixel.c")
 endif()
@@ -167,6 +174,14 @@ add_executable(muse_simulator
     "${MUSE_COMPONENT_DIR}/muse_text.c"
     "${MUSE_SIM_AVATAR_SOURCE}"
 )
+if(MUSE_SIM_PET)
+    target_sources(muse_simulator PRIVATE "${MUSE_COMPONENT_DIR}/muse_pet.c"
+        "${MUSE_COMPONENT_DIR}/muse_pet_ui.c" src/sim_pet_store.c)
+    target_compile_definitions(muse_simulator PRIVATE MUSE_SIM_PET=1)
+endif()
+if(MUSE_SIM_SOFT_AVATAR)
+    target_compile_definitions(muse_simulator PRIVATE MUSE_SIM_SOFT_AVATAR=1)
+endif()
 
 target_include_directories(muse_simulator PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/compat"
@@ -216,6 +231,11 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py"
                 --binary "$<TARGET_FILE:muse_simulator>"
     )
+    if(MUSE_SIM_PET)
+        add_test(NAME muse_pet_interactions
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pet.py"
+                    --binary "$<TARGET_FILE:muse_simulator>")
+    endif()
     set(MUSE_SIM_TEST_ENVIRONMENT
         "SDL_VIDEODRIVER=dummy"
         "SDL_AUDIODRIVER=dummy"
@@ -231,6 +251,10 @@ if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_simulator.py
             "ASAN_OPTIONS=${MUSE_SIM_ASAN_OPTIONS}"
             "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
         )
+    endif()
+    if(MUSE_SIM_PET)
+        set_tests_properties(muse_pet_interactions PROPERTIES
+            ENVIRONMENT "${MUSE_SIM_TEST_ENVIRONMENT}" TIMEOUT 120)
     endif()
     set_tests_properties(muse_simulator_headless PROPERTIES
         ENVIRONMENT "${MUSE_SIM_TEST_ENVIRONMENT}"

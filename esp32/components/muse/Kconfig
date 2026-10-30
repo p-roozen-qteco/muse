@@ -331,6 +331,24 @@ menu "Muse"
             gentle hold. Only reacts while idle; speech and gestures take priority.
             No sounds, network requests or allocations are made by touch reactions.
 
+    config MUSE_SOFT_AVATAR
+        bool "Soft shaded companion instead of the default pixel character"
+        depends on MUSE_ENABLED && SPIRAM && !MUSE_UI_FREEINK
+        default n
+        help
+            A 128x128 RGB888 raster in PSRAM, smoothly scaled by the existing
+            strip decoder. A compact fallback keeps the face working if its
+            allocation fails. An installed custom avatar still takes priority.
+
+    config MUSE_PET
+        bool "Persistent virtual pet, care controls and star tapping game"
+        depends on MUSE_ENABLED && SPIRAM && !MUSE_UI_FREEINK
+        default n
+        help
+            Idle-screen needs, moods, feeding, rest and a 20-second local game.
+            A separate NVS namespace stores progress. A low-priority worker
+            coalesces saves and waits for idle audio. Enabled on S3 1.8 only.
+
     config MUSE_REALTIME_VOICE
         bool "Live voice calls with Muse (experimental)"
         depends on (MUSE_HATCH || HOMEHUB_VOICE) && SPIRAM

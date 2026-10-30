@@ -314,8 +314,25 @@ static bool touch_event(const char *value)
     return SDL_PushEvent(&e) == 1;
 }
 
+#if CONFIG_MUSE_PET
+#include "muse_pet_ui.h"
+static void pet_status(void)
+{
+    muse_pet_t p; muse_pet_game_t g; muse_pet_ui_snapshot(&p,&g);
+    printf("@pet {\"food\":%u,\"energy\":%u,\"joy\":%u,\"resting\":%s,"
+           "\"mood\":%u,\"xp\":%u,\"care\":%u,\"best\":%u,"
+           "\"game_active\":%s,\"game_finished\":%s,\"cell\":%u,\"score\":%u}\n",
+           (unsigned)p.food,(unsigned)p.energy,(unsigned)p.joy,p.resting?"true":"false",
+           (unsigned)muse_pet_mood(&p),(unsigned)p.xp,(unsigned)p.care,(unsigned)p.best,
+           g.active?"true":"false",g.finished?"true":"false",(unsigned)g.cell,(unsigned)g.score);
+}
+#endif
+
 static bool apply_setting(const char *key, const char *value, bool real_time)
 {
+#if CONFIG_MUSE_PET
+    if (!strcmp(key,"pet") && !strcmp(value,"status")) {pet_status();return true;}
+#endif
     if (!strcmp(key, "touch")) return touch_event(value);
     if (!strcmp(key, "page") && (!strcmp(value, "face") || !strcmp(value, "settings"))) {
         muse_ui_bench_page(!strcmp(value, "settings"));

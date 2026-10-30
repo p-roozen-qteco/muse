@@ -64,9 +64,18 @@ class AvatarSelection(unittest.TestCase):
         self.custom.parent.mkdir(exist_ok=True)
         self.custom.write_text('const char *avatar(void) { return "custom"; }\n')
 
-    def configure(self):
+    def test_soft_avatar_and_custom_override(self):
+        (self.root / "avatar/muse_soft.c").write_text('const char *avatar(void) { return "soft"; }\n')
+        self.configure("-DMUSE_SIM_SOFT_AVATAR=ON")
+        self.assertEqual(self.selected(), "soft")
+        self.write_custom()
+        self.assertEqual(self.selected(), "custom")
+        self.custom.unlink()
+        self.assertEqual(self.selected(), "soft")
+
+    def configure(self, *extra):
         subprocess.run(
-            ["cmake", "-S", str(self.root / "simulator"), "-B", str(self.build)],
+            ["cmake", "-S", str(self.root / "simulator"), "-B", str(self.build), *extra],
             check=True, capture_output=True, text=True, timeout=60,
         )
 

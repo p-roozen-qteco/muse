@@ -204,3 +204,25 @@ Use `--board s3-18` for the 368×448 rectangular layout (the default remains
 use the actual SDL/LVGL input path. `page=face` and `page=settings` select a tile
 for comparison tests. Touch reactions use the production companion controller;
 recording, speaker and network services remain simulator stubs.
+
+## Soft Tamagotchi preview
+
+Build with `-DMUSE_SIM_PET=ON`, then run `muse_simulator --board s3-18`.
+This selects the production soft renderer, persistent pet core and care/game UI.
+An existing custom avatar still takes precedence. `-DMUSE_SIM_SOFT_AVATAR=ON`
+can preview only the renderer. Default simulator builds keep the original avatar.
+
+With the pet option enabled, the S3 preview advertises audio capability so both
+reply layouts can be inspected: `speaker=true` previews spoken captions and
+`speaker=false` previews text-only replies. The preview never plays or records
+sound. `pet=status` in a scenario prints a read-only snapshot from the UI thread.
+Set `MUSE_SIM_PET_STATE_FILE` to an explicit temporary file to test persistence
+across simulator launches; omit it for a fresh pet each time. This file adapter
+is separate from the firmware's queued NVS worker, whose failure, coalescing and
+voice-deferral behavior is tested by `tests/test_muse_pet_store.py`.
+
+The added `muse_pet_interactions` CTest drives real pointer events through LVGL:
+food, rest, affection, restart, malformed-record preservation, game completion,
+interruption by conversation, sleep and navigation. The full host suite also
+checks the real raster under ASan/UBSan, cropped/strip output, memory-allocation
+failure, and persistent state/game invariants.
