@@ -59,14 +59,18 @@ def collect(serial_number,firmware):
 
 def summarize(samples,meta,now):
     good=[s for s in samples if s.get('ok')]
-    gaps=0;covered=0.0;restarts=[];previous=None;free=[];largest=[];offline=0
+    gaps=0;covered=0.0;restarts=[];previous=None;free=[];largest=[];offline=0;saved_sessions=0
     for s in samples:
         if not s.get('ok'):
             gaps+=1;previous=None;continue
         p=s['power'];h=p.get('heap',{})
         if isinstance(h.get('free'),(int,float)):free.append(h['free'])
         if isinstance(h.get('largest'),(int,float)):largest.append(h['largest'])
-        if s.get('wifi')!='connected' or s.get('muse')!='Connected' or s.get('link')!='Online':offline+=1
+        # Saved means configured but not currently tested. The firmware also
+        # uses it after its intentional idle close; it is not an outage by
+        # itself, and it does not prove a new conversation will succeed.
+        if s.get('muse')=='Saved':saved_sessions+=1
+        if s.get('wifi')!='connected' or s.get('muse') not in ('Connected','Saved') or s.get('link')!='Online':offline+=1
         if previous:
             dt=s['at']-previous['at'];du=p['uptime']-previous['power']['uptime']
             if dt>0 and dt<=meta['interval_seconds']*2.5:
@@ -84,12 +88,12 @@ def summarize(samples,meta,now):
             possible.append({'at':b['at'],'reason':b['power'].get('boot')})
     elapsed=max(0,min(now,meta['end_at'])-meta['start_at'])
     stale=not samples or now-samples[-1]['at']>meta['interval_seconds']*2.5
-    return {'started_at':meta['start_at'],'ends_at':meta['end_at'],'window_complete':now>=meta['end_at'],
+    return {'summary_schema':2,'started_at':meta['start_at'],'ends_at':meta['end_at'],'window_complete':now>=meta['end_at'],
         'samples':len(samples),'successful_samples':len(good),'unavailable_samples':gaps,
         'elapsed_seconds':round(elapsed),'observed_seconds':round(covered),
         'coverage_fraction':round(min(1,covered/elapsed),4) if elapsed else 0,
         'restart_events':restarts,'possible_restarts_across_gaps':possible,
-        'connection_not_online_samples':offline,'stale':stale,
+        'connection_not_online_samples':offline,'muse_saved_samples':saved_sessions,'stale':stale,
         'internal_heap_min_sampled':min(free) if free else None,
         'largest_block_min_sampled':min(largest) if largest else None,
         'internal_heap_first5_median':statistics.median(free[:5]) if free else None,

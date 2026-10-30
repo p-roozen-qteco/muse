@@ -49,3 +49,16 @@ class Soak(unittest.TestCase):
       'chat':SimpleNamespace(Board=None),'power':SimpleNamespace(ask=None)}):
    s=soak.collect('serial','firmware')
   self.assertEqual(s['reason'],'usb_absent');self.assertNotIn('PRIVATE',str(s))
+
+ def test_saved_session_is_unverified_not_outage(self):
+  a=sample(1000,60);a['muse']='Saved'
+  s=soak.summarize([a],META,1000)
+  self.assertEqual(s['muse_saved_samples'],1);self.assertEqual(s['connection_not_online_samples'],0)
+  self.assertEqual(s['summary_schema'],2)
+ def test_saved_session_does_not_hide_wifi_outage(self):
+  a=sample(1000,60);a['muse']='Saved';a['wifi']='disconnected'
+  s=soak.summarize([a],META,1000);self.assertEqual(s['connection_not_online_samples'],1)
+ def test_real_muse_connection_failure_still_counted(self):
+  a=sample(1000,60);a['muse']="Can't connect"
+  s=soak.summarize([a],META,1000)
+  self.assertEqual(s['connection_not_online_samples'],1);self.assertEqual(s['muse_saved_samples'],0)

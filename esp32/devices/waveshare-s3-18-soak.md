@@ -129,3 +129,20 @@ loshalen van de kabel. De eigenaar geeft voor de aangesloten accu **200 mAh** op
 opgegeven nominale capaciteit, geen gemeten bruikbare capaciteit. Gebruik die
 waarde alleen voor een duidelijk als schatting aangeduide omrekening; de
 daadwerkelijke looptijd moet uit de batterijproef blijken.
+
+## Beoordeling van de ruststatus
+
+`Saved` betekent dat de Muse-koppeling is opgeslagen, maar er op dat moment
+geen bevestigde actieve gesprekssessie is. De firmware sluit een ongebruikte
+sessie na tien minuten en zet de status dan bewust op `Saved`; een volgende
+vraag maakt opnieuw verbinding. Dezelfde status kan ook kort tijdens herstel
+voorkomen. Daarom telt de analyse deze waarde apart als `muse_saved_samples`,
+zonder haar op zichzelf als uitval of als bewezen werkend gesprek te behandelen.
+Wi-Fi-/Link-uitval en expliciete Muse-verbindingsfouten blijven meetellen.
+
+De aanvankelijke beoordelaar telde `Saved` te streng als uitval. Rapporten met
+`summary_schema: 2` gebruiken de gecorrigeerde beoordeling. De lopende sampler
+blijft ongewijzigd doorlopen; zijn ruwe metingen blijven behouden. Gebruik
+`soak.py summary` voor de actuele herberekening, ook wanneer het tijdens de
+meetperiode geschreven `summary.json` nog de oudere beoordelaar gebruikt.
+Er is hiervoor geen firmware gewijzigd, apparaat herstart of meting onderbroken.
