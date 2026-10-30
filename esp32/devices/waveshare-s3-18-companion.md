@@ -103,8 +103,8 @@ remaining long-term validation.
 - The fresh 16 MB backup matches the accepted stability app; the candidate's
   partition table is identical. Changed application sources match the build
   copy. Four actual UI screenshots were inspected at 368×448.
-- Hardware automatic-speech and touch acceptance is still pending; the results
-  above do not claim a successful Muse service round trip or a multiday soak.
+- The owner confirmed automatic speech/text and touch/navigation on the actual
+  board; see the acceptance record below. A multiday soak remains outstanding.
 
 ### Installation observations, 2026-10-30
 
@@ -115,7 +115,23 @@ and sleep settings match their previous values. Six status requests succeeded;
 the firmware identifies the correct board and version, with Wi-Fi connected,
 Muse connected and Link online. No panic/assert/heap-corruption markers occurred
 in the captured post-flash boot log. These observations establish startup and
-connectivity, not yet automatic playback or physical touch acceptance. The owner has been asked to check them. A three-minute read-only USB capture
+connectivity. A three-minute read-only USB capture
 contained no new voice-note upload or audio command, so it cannot establish
 that automatic playback worked. A final controlled restart captured the early
 `starting` message, no panic markers, and Muse/Link online again.
+
+### Owner acceptance, 2026-10-30
+
+On `999.0.0-s3pet-test1`, the owner confirmed both requested checks:
+
+- An ordinary BOOT question ("Hoeveel is twee keer drie?") produces speech and
+  text on the ESP32 automatically, without separately requesting playback.
+- Tapping/holding the idle face gives the wink/happy reaction; swiping to
+  Settings and back works, and the touchscreen remains responsive.
+
+These are owner-observed hardware results, separate from the earlier USB
+capture. They complete the requested feature smoke checks. They do not confirm
+a muted recording, interruption during playback, concurrent touch/audio,
+word-for-word transcription, battery endurance or multiday stability; those
+remain separate hardware checks. No firmware change or reflash was needed for
+this acceptance update.
