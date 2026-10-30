@@ -114,9 +114,9 @@ uitgebreid. We rapporteren wat de bestaande firmware werkelijk doet.
 - **928 hosttests: 924 geslaagd, 4 bestaande skips.** Daarnaast slagen alle
   **13 simulator-CTestcontroles**, inclusief de uitgebreidere aanrakingstests.
   Beide S3-builds slagen met ESP-IDF 6.0.1. De 368×448-indeling is visueel bekeken.
-- De eigenaar moet nog bevestigen dat de grotere knoppen op het echte scherm
-  makkelijker werken. De eerdere bevestiging van audio betreft test1; de
-  audio- en microfooncode is in test2 ongewijzigd.
+- De eigenaar bevestigt dat de grotere knoppen op het echte scherm **duidelijk
+  makkelijker werken**, ook bij een kleine vingerbeweging. De eerdere bevestiging
+  van audio betreft test1; de audio- en microfooncode is in test2 ongewijzigd.
 
 De USB-duurmeting is gestart op **30 oktober 2026 om 15:19:50 Nederlandse tijd**
 en eindigt na 24 uur op **31 oktober om 15:19:50**. Een onafhankelijke
@@ -125,4 +125,7 @@ voltooiing worden gemeld. Automatische sluimering van de Mac wordt tijdelijk
 voorkomen tot het einde van de meetperiode; de Mac en Codex moeten beschikbaar
 blijven. Dit is de start van de duurtest, geen afgerond stabiliteitsresultaat.
 De vieruursproef op accu wacht op het afronden van de USB-fase en het fysiek
-loshalen van de kabel. De accucapaciteit is nog niet bevestigd.
+loshalen van de kabel. De eigenaar geeft voor de aangesloten accu **200 mAh** op. Dat is een
+opgegeven nominale capaciteit, geen gemeten bruikbare capaciteit. Gebruik die
+waarde alleen voor een duidelijk als schatting aangeduide omrekening; de
+daadwerkelijke looptijd moet uit de batterijproef blijken.
