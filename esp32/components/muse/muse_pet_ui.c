@@ -3,12 +3,19 @@
 #include "muse_pet_store.h"
 #include "muse_state.h"
 #include "muse_ui.h"
+#include "muse_board.h"
+#include "muse_balance.h"
 #include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
 
 static muse_pet_t s_pet;
 static muse_pet_game_t s_game;
+static muse_balance_t s_balance;
+static enum {GAME_NONE,GAME_PICKER,GAME_STARS,GAME_BALANCE} s_kind;
+static lv_obj_t *s_instructions,*s_choose_stars,*s_choose_balance,*s_arena,*s_ball;
+static unsigned s_balance_best;
+static int s_arena_h;
 static lv_obj_t *s_hud,*s_panel,*s_labels[3],*s_bars[3],*s_hint,*s_rest_label;
 static lv_obj_t *s_target,*s_score,*s_title,*s_again;
 static int s_w,s_h,s_cell=-1;
@@ -42,6 +49,8 @@ static void message(const char *text)
 static void close_game(void)
 {
     muse_pet_game_cancel(&s_game);
+    muse_balance_cancel(&s_balance);s_kind=GAME_NONE;
+    if(muse_board->motion_enable) muse_board->motion_enable(false);
     if(s_panel) lv_obj_add_flag(s_panel,LV_OBJ_FLAG_HIDDEN);
     muse_ui_set_swipe_enabled(true);
 }
@@ -67,11 +76,36 @@ static void on_action(lv_event_t *e)
         else message("Mijn buikje zit vol");
     } else if(action==1) {
         muse_pet_rest(&s_pet);remember();message(s_pet.resting ? "Even lekker uitrusten" : "Daar ben ik weer!");
-    } else if(action==2) {
-        muse_pet_game_start(&s_game,now,(uint32_t)now+s_pet.care);
-        s_cell=-1;lv_obj_remove_flag(s_panel,LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(s_target,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(s_again,LV_OBJ_FLAG_HIDDEN);
-        label_text(s_title,"Sterren vangen");muse_ui_set_swipe_enabled(false);
+    } else if(action==2 || action==5 || action==6 || action==7) {
+        if(action==7) action=s_kind==GAME_BALANCE?6:5;
+        close_game();
+        lv_obj_remove_flag(s_panel,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_target,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(s_again,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_arena,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_choose_stars,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(s_choose_balance,LV_OBJ_FLAG_HIDDEN);
+        muse_ui_set_swipe_enabled(false);
+        label_text(s_score,"");
+        if(action==2) {
+            s_kind=GAME_PICKER;
+            label_text(s_title,"Samen spelen");label_text(s_instructions,"Kies een spelletje");
+            lv_obj_remove_flag(s_choose_stars,LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(s_choose_balance,LV_OBJ_FLAG_HIDDEN);
+        } else if(action==5) {
+            s_kind=GAME_STARS;
+            muse_pet_game_start(&s_game,now,(uint32_t)now+s_pet.care);
+            s_cell=-1;lv_obj_remove_flag(s_target,LV_OBJ_FLAG_HIDDEN);
+            label_text(s_title,"Sterren vangen");
+            label_text(s_instructions,"Tik de ster aan. Je hebt 20 sec.");
+        } else {
+            s_kind=GAME_BALANCE;
+            muse_balance_start(&s_balance,now,s_w-36,s_arena_h);
+            label_text(s_title,"Rood balletje");
+            label_text(s_instructions,"Houd het scherm vlak en stil");
+            lv_obj_remove_flag(s_arena,LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_ball,LV_OBJ_FLAG_HIDDEN);
+            if(muse_board->motion_enable && muse_board->motion_read) muse_board->motion_enable(true);
+            else s_balance.phase=MUSE_BALANCE_SENSOR_ERROR;
+        }
     } else if(action==3) close_game();
     else if(action==4 && muse_pet_game_hit(&s_game,s_game.cell,now)) {
         /* The target moves on the next UI tick; ignore repeat clicks at its
@@ -131,8 +165,34 @@ void muse_pet_ui_build(lv_obj_t *face,int w,int h)
     lv_obj_set_style_bg_color(s_panel,lv_color_black(),0);lv_obj_set_style_bg_opa(s_panel,LV_OPA_COVER,0);
     lv_obj_remove_flag(s_panel,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|LV_OBJ_FLAG_GESTURE_BUBBLE);
     s_title=label(s_panel,"Sterren vangen",0,28,w,&lv_font_montserrat_20,0xf3dcc1);
-    label(s_panel,"Tik de ster aan. Je hebt 20 sec.",0,62,w,&lv_font_montserrat_14,0xa49cad);
+    s_instructions=label(s_panel,"Tik de ster aan. Je hebt 20 sec.",0,62,w,&lv_font_montserrat_14,0xa49cad);
     s_score=label(s_panel,"",0,91,w,&lv_font_montserrat_16,0xbca4e5);
+    s_choose_stars=button(s_panel,"Sterren vangen",30,152,w-60,5,0x423151,NULL);
+    lv_obj_set_height(s_choose_stars,68);
+    s_choose_balance=button(s_panel,"Rood balletje",30,240,w-60,6,0x542e36,NULL);
+    lv_obj_set_height(s_choose_balance,68);
+    s_arena_h=h-204;
+    s_arena=lv_obj_create(s_panel);lv_obj_remove_style_all(s_arena);
+    lv_obj_set_pos(s_arena,18,120);lv_obj_set_size(s_arena,w-36,s_arena_h);
+    lv_obj_set_style_border_width(s_arena,2,0);lv_obj_set_style_border_color(s_arena,lv_color_hex(0x66566e),0);
+    lv_obj_set_style_radius(s_arena,0,0);
+    lv_obj_remove_flag(s_arena,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *center=lv_obj_create(s_arena);lv_obj_remove_style_all(center);
+    lv_obj_set_size(center,42,42);lv_obj_center(center);
+    lv_obj_set_style_radius(center,LV_RADIUS_CIRCLE,0);lv_obj_set_style_border_width(center,1,0);
+    lv_obj_set_style_border_color(center,lv_color_hex(0x29252e),0);
+    lv_obj_remove_flag(center,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+    s_ball=lv_obj_create(s_arena);lv_obj_remove_style_all(s_ball);lv_obj_set_size(s_ball,28,28);
+    lv_obj_set_style_radius(s_ball,LV_RADIUS_CIRCLE,0);lv_obj_set_style_bg_opa(s_ball,LV_OPA_COVER,0);
+    lv_obj_set_style_bg_color(s_ball,lv_color_hex(0xff4b60),0);
+    lv_obj_set_style_bg_grad_color(s_ball,lv_color_hex(0xb7193d),0);
+    lv_obj_set_style_bg_grad_dir(s_ball,LV_GRAD_DIR_VER,0);
+    lv_obj_remove_flag(s_ball,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *glint=lv_obj_create(s_ball);lv_obj_remove_style_all(glint);
+    lv_obj_set_pos(glint,6,5);lv_obj_set_size(glint,8,6);lv_obj_set_style_radius(glint,LV_RADIUS_CIRCLE,0);
+    lv_obj_set_style_bg_color(glint,lv_color_hex(0xffc6c6),0);lv_obj_set_style_bg_opa(glint,LV_OPA_COVER,0);
+    lv_obj_remove_flag(glint,LV_OBJ_FLAG_CLICKABLE|LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_arena,LV_OBJ_FLAG_HIDDEN);
     s_target=button(s_panel,"",0,0,56,4,0x2c2235,NULL);lv_obj_set_height(s_target,56);
     lv_obj_set_style_radius(s_target,LV_RADIUS_CIRCLE,0);
     static const lv_point_precise_t points[]={{28,6},{34,21},{50,22},{38,33},{42,49},{28,40},{14,49},{18,33},{6,22},{22,21},{28,6}};
@@ -140,7 +200,7 @@ void muse_pet_ui_build(lv_obj_t *face,int w,int h)
     lv_obj_set_style_line_width(star,3,0);lv_obj_set_style_line_rounded(star,true,0);
     lv_obj_set_style_line_color(star,lv_color_hex(0xffdc8e),0);lv_obj_remove_flag(star,LV_OBJ_FLAG_CLICKABLE);
     button(s_panel,"Terug",18,h-64,130,3,0x282331,NULL);
-    s_again=button(s_panel,"Nog eens",w-148,h-64,130,2,0x3c2b43,NULL);
+    s_again=button(s_panel,"Nog eens",w-148,h-64,130,7,0x3c2b43,NULL);
     lv_obj_add_flag(s_panel,LV_OBJ_FLAG_HIDDEN);s_ready=true;
 }
 void muse_pet_ui_hide(void)
@@ -149,7 +209,45 @@ void muse_pet_ui_hide(void)
     lv_obj_add_flag(s_hud,LV_OBJ_FLAG_HIDDEN);
     if(muse_pet_ui_game_open()) close_game();
 }
-bool muse_pet_ui_game_open(void) {return s_ready && (s_game.active || s_game.finished);}
+bool muse_pet_ui_game_open(void) {return s_ready && s_kind!=GAME_NONE;}
+static void balance_tick(uint64_t now)
+{
+    muse_motion_t sample;
+    bool valid=muse_board->motion_read && muse_board->motion_read(&sample);
+    muse_balance_phase_t before=s_balance.phase;
+    muse_balance_tick(&s_balance,now,valid?&sample:NULL);
+    muse_balance_phase_t phase=s_balance.phase;
+    char text[80];
+    if(phase==MUSE_BALANCE_CALIBRATING) {
+        snprintf(text,sizeof(text),"Even ijken... %u%%",s_balance.samples>25?100:s_balance.samples*4);
+        label_text(s_score,text);
+    } else if(phase==MUSE_BALANCE_PLAYING || phase==MUSE_BALANCE_LOST || phase==MUSE_BALANCE_WON) {
+        lv_obj_remove_flag(s_ball,LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_pos(s_ball,(s_w-36)/2-14+(int)s_balance.x,s_arena_h/2-14+(int)s_balance.y);
+        label_text(s_instructions,"Kantel rustig. Blijf van de rand.");
+        if(s_balance.elapsed_ms>s_balance_best) s_balance_best=s_balance.elapsed_ms;
+        snprintf(text,sizeof(text),"%u.%u / 30 sec   |   Beste %u.%u",
+            s_balance.elapsed_ms/1000,(s_balance.elapsed_ms%1000)/100,
+            s_balance_best/1000,(s_balance_best%1000)/100);
+        label_text(s_score,text);
+        if(phase==MUSE_BALANCE_LOST) label_text(s_title,"Oeps, bij de rand!");
+        if(phase==MUSE_BALANCE_WON) {
+            label_text(s_title,"Goed in balans!");
+            if(before==MUSE_BALANCE_PLAYING) {
+                if(muse_pet_pat(&s_pet)) remember();
+                muse_state_make_happy();
+            }
+        }
+    } else {
+        label_text(s_title,"Nog een keertje?");
+        label_text(s_instructions,phase==MUSE_BALANCE_SENSOR_ERROR?"Bewegingssensor niet beschikbaar":"Houd het scherm vlak en stil");
+        label_text(s_score,"Tik op Nog eens om te starten");
+    }
+    if(phase!=MUSE_BALANCE_CALIBRATING && phase!=MUSE_BALANCE_PLAYING) {
+        if(muse_board->motion_enable) muse_board->motion_enable(false);
+        lv_obj_remove_flag(s_again,LV_OBJ_FLAG_HIDDEN);
+    } else muse_state_poke(); /* playing counts as activity, without sound */
+}
 bool muse_pet_ui_tick(uint64_t now,bool visible)
 {
     if(!s_ready) return false;
@@ -158,6 +256,7 @@ bool muse_pet_ui_tick(uint64_t now,bool visible)
     if(!visible) {muse_pet_ui_hide();return false;}
     lv_obj_remove_flag(s_hud,LV_OBJ_FLAG_HIDDEN);
     if(muse_pet_game_finish(&s_game,&s_pet,now)) {remember();muse_state_make_happy();}
+    if(s_kind==GAME_BALANCE) balance_tick(now);
     if(s_game.active) {
         if(s_cell!=s_game.cell) {
             s_cell=s_game.cell;lv_obj_set_pos(s_target,32+(s_cell%3)*(s_w-120)/2,117+(s_cell/3)*80);
@@ -199,3 +298,5 @@ void muse_pet_ui_pat(uint64_t now)
 }
 const char *muse_pet_ui_name(void) {return muse_pet_mood_name(muse_pet_mood(&s_pet));}
 void muse_pet_ui_snapshot(muse_pet_t *p,muse_pet_game_t *g) {if(p)*p=s_pet;if(g)*g=s_game;}
+
+void muse_pet_ui_balance_snapshot(muse_balance_t *b) {if(b)*b=s_balance;}

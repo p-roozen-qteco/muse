@@ -26,6 +26,20 @@
 
 static lv_display_t *s_display;
 static bool s_s3_18;
+static bool s_motion_on,s_motion_valid=true,s_motion_stale;
+static muse_motion_t s_motion={.z=1};
+void sim_board_motion(float x,float y,float z,bool valid,bool stale)
+{s_motion.x=x;s_motion.y=y;s_motion.z=z;s_motion_valid=valid;s_motion_stale=stale;}
+bool sim_board_motion_enabled(void) {return s_motion_on;}
+#if CONFIG_MUSE_PET
+static void sim_motion_enable(bool on) {s_motion_on=on;}
+static bool sim_motion_read(muse_motion_t *out)
+{
+    if(!s_motion_on || !s_motion_valid) return false;
+    if(!s_motion_stale) s_motion.at_ms=sim_time_tick_ms();
+    *out=s_motion;return true;
+}
+#endif
 
 /* muse_ui.c reads the selected board through this production global. */
 const muse_board_t *muse_board;
@@ -120,6 +134,7 @@ const muse_board_t *sim_board_get(void)
         board.diagonal_in = 1.8f;
 #if CONFIG_MUSE_PET
         board.audio_init = sim_audio_unavailable;
+        board.motion_enable=sim_motion_enable;board.motion_read=sim_motion_read;
 #endif
         board.talk_button = "boot";
         board.aux_button = "pwr";

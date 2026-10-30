@@ -77,6 +77,10 @@
 #include "muse_lcd_bands.h"
 #include "muse_mem.h"
 #include "muse_pmu.h"
+#if CONFIG_MUSE_PET
+#include "muse_qmi8658.h"
+#include "esp_timer.h"
+#endif
 
 static const char *TAG = "board";
 
@@ -95,6 +99,11 @@ static esp_err_t init(void)
     if (muse_pmu_init(bsp_i2c_get_handle(), true) != ESP_OK) {
         ESP_LOGW(TAG, "no PMU: PWR button and battery unavailable");
     }
+#if CONFIG_MUSE_PET
+    if (!muse_qmi8658_init(bsp_i2c_get_handle())) {
+        ESP_LOGW(TAG, "no motion sensor: balance game unavailable");
+    }
+#endif
     return ESP_OK;
 }
 
@@ -205,6 +214,10 @@ static unsigned poll_buttons(void)
         ev |= (key & MUSE_PMU_KEY_PRESS ? MUSE_BTN_AUX_PRESS : 0) |
               (key & MUSE_PMU_KEY_RELEASE ? MUSE_BTN_AUX_RELEASE : 0);
     }
+#if CONFIG_MUSE_PET
+    muse_qmi8658_poll((uint64_t)esp_timer_get_time()/1000,
+        !s_boot.pressed && !muse_state_asleep() && muse_state_mode(NULL)==MUSE_MODE_IDLE);
+#endif
     return ev;
 }
 
@@ -227,6 +240,10 @@ static const muse_board_t s_board = {
     .mic_slot = 0,              /* one ES8311 mic, on the left slot */
     .poll_buttons = poll_buttons,
     .read_power = muse_pmu_read_power,
+#if CONFIG_MUSE_PET
+    .motion_enable = muse_qmi8658_request,
+    .motion_read = muse_qmi8658_read,
+#endif
     .power_off = muse_pmu_power_off,
 };
 

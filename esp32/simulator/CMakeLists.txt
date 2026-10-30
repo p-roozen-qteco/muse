@@ -176,7 +176,7 @@ add_executable(muse_simulator
 )
 if(MUSE_SIM_PET)
     target_sources(muse_simulator PRIVATE "${MUSE_COMPONENT_DIR}/muse_pet.c"
-        "${MUSE_COMPONENT_DIR}/muse_pet_ui.c" src/sim_pet_store.c)
+        "${MUSE_COMPONENT_DIR}/muse_pet_ui.c" "${MUSE_COMPONENT_DIR}/muse_balance.c" src/sim_pet_store.c)
     target_compile_definitions(muse_simulator PRIVATE MUSE_SIM_PET=1)
 endif()
 if(MUSE_SIM_SOFT_AVATAR)

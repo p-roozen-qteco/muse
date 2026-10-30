@@ -34,6 +34,7 @@ typedef uint8_t lv_align_t;
 #endif
 
 #include "muse_state.h"
+#include "muse_motion.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -156,6 +157,10 @@ typedef struct {
      * buttons needn't be polled. NULL: polled. */
     void (*wait_buttons)(int timeout_ms);
     esp_err_t (*read_power)(muse_power_t *out);
+    /* Optional game tilt. Enable is a thread-safe request only; read copies
+     * a timestamped cache without I2C or waits on the LVGL thread. */
+    void (*motion_enable)(bool on);
+    bool (*motion_read)(muse_motion_t *out);
     /* Turns the board off; returns only on failure. NULL: it can't from
      * software (a physical switch does), and Settings has no Power off. */
     esp_err_t (*power_off)(void);

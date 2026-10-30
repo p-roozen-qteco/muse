@@ -319,6 +319,10 @@ static bool touch_event(const char *value)
 static void pet_status(void)
 {
     muse_pet_t p; muse_pet_game_t g; muse_pet_ui_snapshot(&p,&g);
+    muse_balance_t b;muse_pet_ui_balance_snapshot(&b);
+    printf("@balance {\"phase\":%u,\"x\":%.2f,\"y\":%.2f,\"ms\":%u,\"motion\":%s,\"open\":%s}\n",
+        (unsigned)b.phase,(double)b.x,(double)b.y,b.elapsed_ms,sim_board_motion_enabled()?"true":"false",
+        muse_pet_ui_game_open()?"true":"false");
     printf("@pet {\"food\":%u,\"energy\":%u,\"joy\":%u,\"resting\":%s,"
            "\"mood\":%u,\"xp\":%u,\"care\":%u,\"best\":%u,"
            "\"game_active\":%s,\"game_finished\":%s,\"cell\":%u,\"score\":%u}\n",
@@ -331,6 +335,15 @@ static void pet_status(void)
 static bool apply_setting(const char *key, const char *value, bool real_time)
 {
 #if CONFIG_MUSE_PET
+    if(!strcmp(key,"tilt")) {
+        float x,y,z;char tail;
+        if(!strcmp(value,"missing")) {sim_board_motion(0,0,0,false,false);return true;}
+        if(!strcmp(value,"stale")) {sim_board_motion(0,0,1,true,true);return true;}
+        if(sscanf(value,"%f,%f,%f%c",&x,&y,&z,&tail)==3 && isfinite(x) && isfinite(y) && isfinite(z)) {
+            sim_board_motion(x,y,z,true,false);return true;
+        }
+        return false;
+    }
     if (!strcmp(key,"pet") && !strcmp(value,"status")) {pet_status();return true;}
 #endif
     if (!strcmp(key, "touch")) return touch_event(value);
