@@ -24,12 +24,14 @@ esp_err_t i2c_master_transmit(void *,const uint8_t *,size_t,int);
 '''
 CORE=r'''
 #include "muse_qmi8658.h"
+#include "muse_balance.h"
 #include <assert.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 static uint8_t regs[256];static unsigned calls,writes,removed,critical,delayed,address;
-static int fail_reg=-1,wrong_id,missing;
+static int fail_reg=-1,wrong_id,missing,ignore_ctrl1;
+static int16_t axes[3];
 void enter(void) {assert(!critical);critical++;}
 void leave(void) {assert(critical==1);critical--;}
 void vTaskDelay(unsigned n) {assert(n<=20);delayed+=n;}
@@ -42,18 +44,29 @@ int i2c_master_transmit_receive(void *dev,const uint8_t *r,size_t rn,uint8_t *ou
  assert(dev && rn==1 && timeout==10 && !critical);calls++;
  if(missing || *r==fail_reg)return -1;
  if(*r==0){*out=wrong_id?7:5;return 0;}
- memcpy(out,regs+*r,n);return 0;
+ if(*r==0x35 && n==6) {
+  /* Model the hardware, not bytes already in the decoder's preferred
+   * order. CTRL1.BE swaps the output bytes as specified in Table 22.
+   * The old 0x60 configuration must fail the real-g/axis assertions. */
+  for(unsigned i=0;i<3;i++) {
+   uint16_t v=(uint16_t)axes[i];
+   out[i*2]=(regs[2]&0x20)?v>>8:v&255;
+   out[i*2+1]=(regs[2]&0x20)?v&255:v>>8;
+  }
+ } else memcpy(out,regs+*r,n);
+ return 0;
 }
 int i2c_master_transmit(void *dev,const uint8_t *b,size_t n,int timeout) {
  assert(dev && n==2 && timeout==10 && !critical);calls++;writes++;
  if(b[0]==fail_reg)return -1;
- regs[b[0]]=b[1];return 0;
+ if(b[0]!=2 || !ignore_ctrl1)regs[b[0]]=b[1];
+ return 0;
 }
 static void init(void) {
- assert(muse_qmi8658_init((void *)1));assert(delayed==20 && regs[2]==0x60 && regs[3]==0x17 && regs[6]==1 && regs[8]==0);
+ assert(muse_qmi8658_init((void *)1));assert(delayed==20 && regs[2]==0x40 && regs[3]==0x17 && regs[6]==1 && regs[8]==0);
 }
 static void raw(int x,int y,int z) {
- int v[]={x,y,z};for(int i=0;i<3;i++){regs[0x35+i*2]=v[i]&255;regs[0x36+i*2]=(v[i]>>8)&255;}regs[0x2e]=1;
+ axes[0]=x;axes[1]=y;axes[2]=z;regs[0x2e]=1;
 }
 int main(int argc,char **argv) {
  assert(argc==2);int n=atoi(argv[1]);muse_motion_t s;
@@ -84,6 +97,26 @@ int main(int argc,char **argv) {
   fail_reg=8;muse_qmi8658_request(false);muse_qmi8658_poll(1180,true);assert(regs[8]==1);
   fail_reg=-1;muse_qmi8658_poll(2180,true);assert(regs[8]==0);
  }
+ if(n==6){
+  regs[2]=0x60;ignore_ctrl1=1;
+  assert(!muse_qmi8658_init((void *)1));assert(removed==1 && regs[8]==0);
+ }
+ if(n==7){
+  init();muse_qmi8658_request(true);muse_qmi8658_poll(100,true);
+  raw(123,-257,8192);muse_qmi8658_poll(140,true);assert(muse_qmi8658_read(&s));
+  assert(fabsf(s.x-257/8192.0f)<0.00001f && fabsf(s.y-123/8192.0f)<0.00001f && s.z==1);
+  assert(s.x*s.x+s.y*s.y+s.z*s.z>0.99f && s.x*s.x+s.y*s.y+s.z*s.z<1.01f);
+ }
+ if(n==8){
+  init();muse_balance_t game;muse_balance_start(&game,100,332,244);
+  muse_qmi8658_request(true);muse_qmi8658_poll(100,true);
+  for(unsigned now=140;now<=1500;now+=40) {
+   raw((now/40)%2?80:-80,(now/40)%3?160:-160,8192);
+   muse_qmi8658_poll(now,true);assert(muse_qmi8658_read(&s));
+   muse_balance_tick(&game,now,&s);
+  }
+  assert(game.phase==MUSE_BALANCE_PLAYING && game.elapsed_ms>0);
+ }
  assert(!critical);
 }
 '''
@@ -97,13 +130,13 @@ class MotionDriverTests(unittest.TestCase):
         (r/'freertos/task.h').write_text('void vTaskDelay(unsigned);\n')
         (r/'esp_log.h').write_text('#define ESP_LOGI(...) ((void)0)\n')
         (r/'main.c').write_text(CORE)
-        cmd=shlex.split(os.getenv('CC','cc'))+['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I',str(r),'-I',str(ROOT/'components/muse'),'-I',str(ROOT/'components/muse/boards'),str(r/'main.c'),str(ROOT/'components/muse/boards/muse_qmi8658.c'),'-o',str(cls.exe)]
+        cmd=shlex.split(os.getenv('CC','cc'))+['-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I',str(r),'-I',str(ROOT/'components/muse'),'-I',str(ROOT/'components/muse/boards'),str(r/'main.c'),str(ROOT/'components/muse/boards/muse_qmi8658.c'),str(ROOT/'components/muse/muse_balance.c'),'-lm','-o',str(cls.exe)]
         p=subprocess.run(cmd,capture_output=True,text=True);assert p.returncode==0,p.stdout+p.stderr
     @classmethod
     def tearDownClass(cls):cls.tmp.cleanup()
     def run_case(self,n):
         r=subprocess.run([str(self.exe),str(n)],capture_output=True,text=True,timeout=10)
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
-for i,name in enumerate(('wrong_identity','missing','config_failure','axes_and_standby','audio_preempts','bounded_io_failure')):
+for i,name in enumerate(('wrong_identity','missing','config_failure','axes_and_standby','audio_preempts','bounded_io_failure','endian_readback_mismatch','level_gravity_endian','sensor_to_calibration')):
     setattr(MotionDriverTests,'test_'+name,lambda self,n=i:self.run_case(n))
 if __name__=='__main__':unittest.main()

@@ -5,6 +5,7 @@
 #include "muse_ui.h"
 #include "muse_board.h"
 #include "muse_balance.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 #include <stdio.h>
 #include <string.h>
@@ -102,7 +103,11 @@ static void on_action(lv_event_t *e)
             label_text(s_title,"Rood balletje");
             label_text(s_instructions,"Houd het scherm vlak en stil");
             lv_obj_remove_flag(s_arena,LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(s_ball,LV_OBJ_FLAG_HIDDEN);
+            /* Show the resting ball immediately, even before the sensor has
+             * produced a valid calibration. Missing data must not look like
+             * an empty/broken game. Only the clock and motion wait for it. */
+            lv_obj_set_pos(s_ball,(s_w-36)/2-14,s_arena_h/2-14);
+            lv_obj_remove_flag(s_ball,LV_OBJ_FLAG_HIDDEN);
             if(muse_board->motion_enable && muse_board->motion_read) muse_board->motion_enable(true);
             else s_balance.phase=MUSE_BALANCE_SENSOR_ERROR;
         }
@@ -217,6 +222,10 @@ static void balance_tick(uint64_t now)
     muse_balance_phase_t before=s_balance.phase;
     muse_balance_tick(&s_balance,now,valid?&sample:NULL);
     muse_balance_phase_t phase=s_balance.phase;
+    if(phase!=before) {
+        ESP_LOGI("muse_balance","phase %u -> %u; samples=%u; elapsed_ms=%u",
+            (unsigned)before,(unsigned)phase,s_balance.samples,s_balance.elapsed_ms);
+    }
     char text[80];
     if(phase==MUSE_BALANCE_CALIBRATING) {
         snprintf(text,sizeof(text),"Even ijken... %u%%",s_balance.samples>25?100:s_balance.samples*4);

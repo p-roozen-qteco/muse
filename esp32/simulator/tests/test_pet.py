@@ -19,23 +19,38 @@ def main():
             seq+=1
             if not keep:state.unlink(missing_ok=True)
             scenario=root/f'{seq}.txt';scenario.write_text(BASE+script+'pet=status\n')
-            p=subprocess.run([str(a.binary),'--headless','--board','s3-18','--scenario',str(scenario),'--run-ms','0'],
+            shot=root/f'balance-{seq}.ppm'
+            p=subprocess.run([str(a.binary),'--headless','--board','s3-18','--scenario',str(scenario),'--run-ms','0','--screenshot',str(shot)],
                 text=True,capture_output=True,timeout=45,env={**os.environ,'SDL_VIDEODRIVER':'dummy','SDL_AUDIODRIVER':'dummy',
                 'MUSE_SIM_PET_STATE_FILE':str(state),'ASAN_OPTIONS':os.environ.get('ASAN_OPTIONS','detect_leaks=0:halt_on_error=1')})
             assert p.returncode==0,p.stdout+p.stderr
             return [json.loads(line[5:]) for line in p.stdout.splitlines() if line.startswith('@pet ')][-1]
         # Picker and real simulated gravity through the production balance UI.
         balance=tap(296,408)+tap(184,270)
-        def balance_run(script):
+        def balance_run(script,visible=False):
             nonlocal seq
             seq+=1;scenario=root/f'balance-{seq}.txt';scenario.write_text(BASE+script+'pet=status\n')
-            p=subprocess.run([str(a.binary),'--headless','--board','s3-18','--scenario',str(scenario),'--run-ms','0'],
+            shot=root/f'balance-{seq}.ppm'
+            p=subprocess.run([str(a.binary),'--headless','--board','s3-18','--scenario',str(scenario),'--run-ms','0','--screenshot',str(shot)],
                 text=True,capture_output=True,timeout=45,env={**os.environ,'SDL_VIDEODRIVER':'dummy','SDL_AUDIODRIVER':'dummy',
                 'ASAN_OPTIONS':'detect_leaks=0:halt_on_error=1'})
             assert p.returncode==0,p.stdout+p.stderr
+            if visible:
+                data=shot.read_bytes();header=b'P6\n368 448\n255\n';assert data.startswith(header)
+                pixels=data[len(header):];red=0
+                for y in range(120,364):
+                    for x in range(18,350):
+                        i=(y*368+x)*3
+                        red+=pixels[i]>150 and pixels[i+1]<100 and pixels[i+2]<160
+                assert red>350,('ball is not visible in the arena',red,p.stdout)
             return [json.loads(line[9:]) for line in p.stdout.splitlines() if line.startswith('@balance ')][-1]
         b=balance_run(tap(296,408));assert b['open'] and not b['motion'],b
-        b=balance_run(balance+'advance=1300\n');assert b['phase']==2 and b['motion'],b
+        # A visible resting ball during calibration and errors avoids an empty
+        # arena. Check rendered pixels, not just the model's active flag.
+        b=balance_run(balance,visible=True);assert b['phase']==1,b
+        b=balance_run('tilt=missing\n'+balance+'advance=1200\n',visible=True);assert b['phase']==5,b
+        b=balance_run('tilt=0,1,0\n'+balance+'advance=8500\n',visible=True);assert b['phase']==6,b
+        b=balance_run(balance+'advance=1300\n',visible=True);assert b['phase']==2 and b['motion'],b
         b=balance_run(balance+'advance=1300\ntilt=0.5,0,0.86\nadvance=500\n');assert b['x']>10,b
         b=balance_run(balance+'advance=1300\ntilt=0.5,0,0.86\nadvance=6000\n');assert b['phase']==3 and not b['motion'],b
         for fault in ('missing','stale'):

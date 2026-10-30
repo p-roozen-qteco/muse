@@ -6,6 +6,9 @@
  * REG/QMI8658Constants.h} (identity 5, +/-4g, 62.5Hz, little endian),
  * firmware/brookesia/components/Gravitysphere/Gravitysphere.cpp
  * (portrait screen x=-accel_y, y=accel_x; accelerometer only while playing).
+ * QMI8658A Datasheet Rev A, Table 22, printed p.30: CTRL1 bit5 (BE)
+ * must be zero for the little-endian decode below. The vendor's 0x60
+ * example value sets BE; use 0x40 and verify readback instead.
  * This small driver does not copy vendor implementation code.
  * IDF 6.0.1 serializes synchronous transactions with its bus semaphore.
  * No bus access from LVGL, no new task, no gyro drift, no unbounded waits. */
@@ -17,7 +20,7 @@
 
 static i2c_master_dev_handle_t s_dev;
 static atomic_bool s_requested;
-static bool s_on,s_valid;
+static bool s_on,s_valid,s_log_first;
 static uint64_t s_next;
 static muse_motion_t s_sample;
 static portMUX_TYPE s_mux=portMUX_INITIALIZER_UNLOCKED;
@@ -42,9 +45,13 @@ bool muse_qmi8658_init(i2c_master_bus_handle_t bus)
     if(!s_dev) return false;
     if(wr(0x60,0xb0)!=ESP_OK) goto fail;
     vTaskDelay(pdMS_TO_TICKS(20));
-    /* Auto-increment, sensors off, 4g/62.5Hz, accelerometer low-pass on. */
-    if(wr(2,0x60)!=ESP_OK || wr(8,0)!=ESP_OK || wr(3,0x17)!=ESP_OK || wr(6,1)!=ESP_OK) goto fail;
-    ESP_LOGI("muse_motion","QMI8658 ready; accelerometer sleeps outside balance game");
+    /* Auto-increment AND little endian; 0x60 would silently byte-swap
+     * every axis while still passing a one-byte WHO_AM_I probe. */
+    if(wr(2,0x40)!=ESP_OK || wr(8,0)!=ESP_OK || wr(3,0x17)!=ESP_OK || wr(6,1)!=ESP_OK) goto fail;
+    uint8_t ctrl1=0,ctrl2=0;
+    if(rd(2,&ctrl1,1)!=ESP_OK || (ctrl1&0x60)!=0x40 ||
+       rd(3,&ctrl2,1)!=ESP_OK || ctrl2!=0x17) goto fail;
+    ESP_LOGI("muse_motion","QMI8658 ready; little-endian readback verified; idle sensors off");
     return true;
 fail:
     (void)wr(8,0);i2c_master_bus_rm_device(s_dev);s_dev=NULL;return false;
@@ -65,7 +72,7 @@ void muse_qmi8658_poll(uint64_t now,bool allowed)
     if(want!=s_on) {
         invalidate();
         if(wr(8,want?1:0)!=ESP_OK) {s_next=now+1000;return;}
-        s_on=want;s_next=now+40;return;
+        s_on=want;s_log_first=want;s_next=now+40;return;
     }
     if(!s_on) return;
     s_next=now+40;
@@ -78,4 +85,9 @@ void muse_qmi8658_poll(uint64_t now,bool allowed)
     int16_t az=(int16_t)((unsigned)b[4]|(unsigned)b[5]<<8);
     muse_motion_t sample={.x=-ay/8192.0f,.y=ax/8192.0f,.z=az/8192.0f,.at_ms=now};
     portENTER_CRITICAL(&s_mux);s_sample=sample;s_valid=true;portEXIT_CRITICAL(&s_mux);
+    if(s_log_first) {
+        s_log_first=false;
+        ESP_LOGI("muse_motion","first gravity sample (mg): x=%d y=%d z=%d",
+            (int)(sample.x*1000),(int)(sample.y*1000),(int)(sample.z*1000));
+    }
 }

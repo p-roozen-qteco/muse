@@ -1,12 +1,19 @@
 # Rood balletje — Waveshare S3 AMOLED 1.8 V2
 
-Kandidaat `999.0.0-s3tama-test3` voegt een lokaal balansspel toe aan test2.
+Herstelkandidaat **`999.0.0-s3tama-test4`** volgt op test3. De eigenaar meldde
+op test3 dat starten niet goed ging en het balletje niet altijd zichtbaar was.
+Die fysieke acceptatie is dus niet geslaagd; de test3-duurmeting is afgebroken.
+De resultaten van test3 hieronder zijn historische bouw-/USB-waarnemingen.
+
+Test4 corrigeert de gegevensvolgorde van de sensor en toont het stilstaande
+balletje meteen tijdens het ijken. Het spel zelf is toegevoegd boven op test2.
 
 ## Spelen
 
 1. Tik op **Spelen**. Kies **Rood balletje** of het bestaande **Sterren vangen**.
 2. Houd het apparaat met het scherm naar boven, ongeveer vlak en één seconde
-   stil. Het spel ijkt de houding waarin je het vasthoudt.
+   stil. Het rode balletje staat al in het midden terwijl de voortgang van het
+   ijken zichtbaar is. Het spel ijkt de houding waarin je het vasthoudt.
 3. Kantel voorzichtig links/rechts en voor/achter. Houd het rode balletje
    **30 seconden binnen het kader**. Een lichte wisselende drift maakt het een
    balansuitdaging. De timer telt de daadwerkelijk verwerkte speeltijd.
@@ -114,3 +121,33 @@ maximaal tot **31 oktober om 16:15 CET**. De eerste status-/powermeting is gesla
 De geplande opvolging is hervat voor deze nieuwe meetronde. De fysieke
 spel-/audiovragen zijn nog niet beantwoord; dit wordt niet als goedgekeurd
 geboekt. Accu-ontlading is nog niet getest.
+
+## Herstel van de startfout (test4)
+
+De driver stelde CTRL1 in op `0x60` maar decodeerde de aswaarden als little
+endian. Volgens het QMI8658A-datablad, tabel 22 op gedrukte pagina 30, zet
+`0x60` juist bit 5 (BE, big endian). Het één-byte identiteitsregister detecteert
+deze fout niet. Een normale zwaartekrachtmeting kan hierdoor een ongeldige
+waarde worden; de ijking weigert die. De eerdere testbus leverde vaste bytes
+in de verwachte volgorde en modelleerde BE niet, waardoor de fout onopgemerkt
+bleef in de eerste tests.
+
+Test4 gebruikt `0x40` (auto-increment aan, BE uit) en controleert na het
+instellen de teruggelezen bytevolgorde en schaal. Een afwijking wordt als
+sensorfout afgehandeld. De nieuwe testbus modelleert beide bytevolgorden;
+regressietests controleren echte g-waarden, teken/assen, geweigerde instellingen
+en de route van sensorbytes naar geslaagde ijking. De oude driver faalt de
+nieuwe zwaartekrachtproef, ook als zijn oude configuratieassertie wordt toegelaten.
+
+Het balletje blijft tijdens ijking en een foutmelding zichtbaar op zijn
+start-/laatste positie; zonder geldige metingen bewegen het balletje en de
+timer niet. Schermtests tellen hiervoor daadwerkelijk gerenderde rode pixels.
+Eén diagnostische zwaartekrachtmeting per start en faseovergangen worden lokaal
+gelogd om de fysieke proef te beoordelen. Er worden geen opnames of extra
+berichten verstuurd.
+
+De test3-USB-ronde bevat 11 geslaagde metingen zonder gedetecteerde herstart of
+expliciete verbindingsfout. Dat weerspreekt de gemelde spelfout niet: die
+statusproef test geen zichtbaarheid of sensorcorrectheid. De duurtestopvolging
+blijft gepauzeerd tot de fysieke start-/kantelproef is afgerond. De eerdere
+verwachte eindtijd van 31 oktober 16:15 geldt niet meer.
