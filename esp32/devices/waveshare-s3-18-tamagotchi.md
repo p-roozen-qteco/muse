@@ -86,3 +86,33 @@ het echte karakter; hij emuleert geen ESP32-timing, fysieke audio of batterij.
 
 Korte tests bewijzen geen meerdaagse stabiliteit of batterijduur. Die blijven
 aparte duurproeven na deze functieronde.
+
+## Resultaten kandidaat, 30 oktober 2026
+
+- **917 hosttests:** 913 geslaagd, 4 bestaande skips voor ontbrekende externe
+  afhankelijkheden/hardware. De volledige reeks is na de laatste aanpassing
+  opnieuw uitgevoerd. De tests bevatten 100.000 bewaar/herstelcycli van de kern,
+  1.000 rendererframes met normale en geforceerd mislukte PSRAM-allocatie, en
+  twaalf proeven met de echte opslagwerker onder gesimuleerde fouten.
+- **13 simulator-CTestcontroles geslaagd**, met ASan/UBSan en compilerwaarschuwingen
+  als fouten. Nieuwe verzorging, herstart, spel, gespreksvoorrang en de bestaande
+  navigatie-/toetsenbordtests slagen. Beide antwoordindelingen en luisteren,
+  beginscherm, rust en spel zijn op 368×448 visueel gecontroleerd.
+- **S3 1.8 en S3 2.16 bouwen met ESP-IDF 6.0.1.** De 1.8-app is 2.166.784 bytes.
+  De nieuwe functies staan aantoonbaar in de configuratie en het gelinkte bestand.
+- Een verse **16 MB-back-up** komt overeen met de eerder door de eigenaar
+  goedgekeurde companion-app. De partitietabel is identiek gebleven.
+- `999.0.0-s3tama-test1` is geïnstalleerd. Alle vier geschreven segmenten zijn
+  gecontroleerd. De USB-log toont `starting`, beschikbare voortgangsopslag,
+  succesvolle PSRAM-rasterallocatie en geen panic/assert/heap-corruptiemeldingen.
+  Wi-Fi is verbonden, Muse verbonden en Link online. Volume 100, speaker aan,
+  microfoonversterking 30 dB, helderheid 50 en slaapinstelling 0 zijn behouden.
+
+Bij een tweede gecontroleerde start zijn alle **33 eerder aanwezige NVS-records**
+bytegetrouw behouden (de nieuwe pet-naamruimte is apart). Ook deze start bereikt
+`starting` en de online Muse-/Link-verbinding zonder crashmeldingen.
+
+Deze resultaten zijn bouw-, simulator- en USB-waarnemingen. De fysieke
+bevestiging van nieuw uiterlijk/verzorging/spel en gelijktijdig werkende
+microfoon/audio is nog afzonderlijk nodig. Meerdaagse duurproeven zijn niet
+uitgevoerd.
