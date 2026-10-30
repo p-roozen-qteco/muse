@@ -81,7 +81,11 @@ After the USB watchdog restart the board returned six status responses,
 reported the new version, Wi-Fi connected and Muse connected. Volume 100,
 speaker enabled, microphone gain 30 dB, brightness 50 and sleep setting 0
 were unchanged. No panic markers appeared during the short observation.
-This does not yet constitute owner acceptance of the screen and sound.
+The owner subsequently confirmed that the image and touchscreen work normally.
+A BOOT-held spoken question requesting playback and displayed text again
+produced both sound and text on the ESP32. This accepts the screen/touch and
+microphone-to-Muse-to-speaker/caption smoke tests on this board. These results
+are owner-reported; the USB observation did not capture that conversation.
 
 A 48-hour run, battery cold starts, repeated Wi-Fi loss/recovery and
 controlled Dutch speech comparisons remain necessary before calling this a
