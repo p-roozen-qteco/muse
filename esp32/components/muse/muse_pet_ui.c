@@ -13,6 +13,7 @@ static lv_obj_t *s_hud,*s_panel,*s_labels[3],*s_bars[3],*s_hint,*s_rest_label;
 static lv_obj_t *s_target,*s_score,*s_title,*s_again;
 static int s_w,s_h,s_cell=-1;
 static uint64_t s_checkpoint,s_next_pat,s_next_action,s_message_until;
+static uintptr_t s_last_action;
 static bool s_ready,s_dirty;
 static char s_message[48];
 static uint64_t now_ms(void) {return (uint64_t)esp_timer_get_time()/1000;}
@@ -36,7 +37,7 @@ static void remember(void)
 }
 static void message(const char *text)
 {
-    snprintf(s_message,sizeof(s_message),"%s",text);s_message_until=now_ms()+2500;
+    snprintf(s_message,sizeof(s_message),"%s",text);s_message_until=now_ms()+3000;
 }
 static void close_game(void)
 {
@@ -47,11 +48,19 @@ static void close_game(void)
 static void on_action(lv_event_t *e)
 {
     if(!available()) return;
+    lv_indev_t *indev=lv_event_get_indev(e);
+    if(indev && lv_indev_get_type(indev)==LV_INDEV_TYPE_POINTER) {
+        lv_point_t point;lv_indev_get_point(indev,&point);
+        /* LVGL keeps the pressed object captured; releasing outside must not
+         * activate it merely because scrolling is disabled for the button. */
+        if(!lv_obj_hit_test(lv_event_get_target_obj(e),&point)) return;
+    }
     uintptr_t action=(uintptr_t)lv_event_get_user_data(e);
     uint64_t now=now_ms();
     if(action==4 && lv_obj_has_flag(s_target,LV_OBJ_FLAG_HIDDEN)) return;
-    if(action!=4 && now<s_next_action) return;
-    if(action!=4) s_next_action=now+600;
+    /* Reject a duplicate contact, without swallowing a tap on another control. */
+    if(action!=4 && action==s_last_action && now<s_next_action) return;
+    if(action!=4) {s_last_action=action;s_next_action=now+160;}
     muse_state_poke();
     if(action==0) {
         if(muse_pet_feed(&s_pet)) {remember();message("Smakelijk!");muse_state_make_happy();}
@@ -73,9 +82,16 @@ static void on_action(lv_event_t *e)
 static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int w,uintptr_t action,uint32_t color,lv_obj_t **text_out)
 {
     lv_obj_t *o=lv_button_create(parent);lv_obj_remove_style_all(o);
-    lv_obj_set_pos(o,x,y);lv_obj_set_size(o,w,40);
+    lv_obj_set_pos(o,x,y);lv_obj_set_size(o,w,52);
     lv_obj_set_style_radius(o,17,0);lv_obj_set_style_bg_color(o,lv_color_hex(color),0);
-    lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0);lv_obj_remove_flag(o,LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(o,LV_OPA_COVER,0);
+    lv_obj_set_style_bg_color(o,lv_color_lighten(lv_color_hex(color),55),LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(o,1,0);
+    lv_obj_set_style_border_color(o,lv_color_lighten(lv_color_hex(color),25),0);
+    /* A fingertip can drift while tapping. Don't turn that into a tile swipe;
+     * swiping the face still navigates normally. Leaving the button cancels. */
+    lv_obj_remove_flag(o,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|
+                         LV_OBJ_FLAG_SCROLL_CHAIN_VER|LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_event_cb(o,on_action,LV_EVENT_CLICKED,(void *)action);
     lv_obj_t *l=label(o,text,0,0,w,&lv_font_montserrat_16,0xf5eadd);lv_obj_center(l);
     if(text_out) *text_out=l;
@@ -87,7 +103,7 @@ void muse_pet_ui_build(lv_obj_t *face,int w,int h)
     uint64_t now=now_ms();
     (void)muse_pet_store_start(&s_pet,now);s_checkpoint=now;
     s_hud=lv_obj_create(face);lv_obj_remove_style_all(s_hud);
-    lv_obj_set_pos(s_hud,0,h-116);lv_obj_set_size(s_hud,w,96);
+    lv_obj_set_pos(s_hud,0,h-136);lv_obj_set_size(s_hud,w,120);
     lv_obj_remove_flag(s_hud,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_CLICKABLE);
     static const uint32_t colors[]={0xe7b996,0x8ed2c3,0xbca4e5};
     for(int i=0;i<3;i++) {
@@ -99,10 +115,18 @@ void muse_pet_ui_build(lv_obj_t *face,int w,int h)
         lv_obj_remove_flag(s_bars[i],LV_OBJ_FLAG_CLICKABLE);
     }
     s_hint=label(s_hud,"",0,31,w,&lv_font_montserrat_14,0xa49cad);
-    int gap=10,bw=(w-36-2*gap)/3;
-    button(s_hud,"Eten",18,56,bw,0,0x342924,NULL);
-    button(s_hud,"Rust",18+bw+gap,56,bw,1,0x1e3130,&s_rest_label);
-    button(s_hud,"Spelen",18+2*(bw+gap),56,bw,2,0x30263e,NULL);
+    int gap=8,bw=(w-28-2*gap)/3;
+    const char *names[]={"Eten","Rust","Spelen"};
+    const uint32_t button_colors[]={0x49352a,0x24413d,0x423151};
+    for(uintptr_t i=0;i<3;i++) {
+        lv_obj_t *text;
+        lv_obj_t *o=button(s_hud,names[i],14+(int)i*(bw+gap),56,bw,i,button_colors[i],&text);
+        lv_obj_set_height(o,60);
+        lv_obj_set_ext_click_area(o,4); /* adjacent hit areas remain disjoint */
+        lv_obj_set_style_text_font(text,&lv_font_montserrat_20,0);
+        lv_obj_center(text);
+        if(i==1) s_rest_label=text;
+    }
     s_panel=lv_obj_create(face);lv_obj_remove_style_all(s_panel);lv_obj_set_size(s_panel,w,h);
     lv_obj_set_style_bg_color(s_panel,lv_color_black(),0);lv_obj_set_style_bg_opa(s_panel,LV_OPA_COVER,0);
     lv_obj_remove_flag(s_panel,LV_OBJ_FLAG_SCROLLABLE|LV_OBJ_FLAG_SCROLL_CHAIN_HOR|LV_OBJ_FLAG_GESTURE_BUBBLE);

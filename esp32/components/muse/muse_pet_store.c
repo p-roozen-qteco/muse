@@ -68,7 +68,12 @@ bool muse_pet_store_start(muse_pet_t *p, uint64_t now_ms)
         s_queue=NULL; nvs_close(s_nvs); return false;
     }
     atomic_store(&s_failed,false);
-    ESP_LOGI(TAG,"progress ready: care=%u best=%u",(unsigned)p->care,(unsigned)p->best);
+    /* Non-sensitive startup evidence for a physical restore check. */
+    ESP_LOGI(TAG,"progress ready: food=%u energy=%u joy=%u resting=%u playful=%u "
+             "bonus=%u best=%u xp=%u care=%u minutes=%lu",
+             (unsigned)p->food,(unsigned)p->energy,(unsigned)p->joy,(unsigned)p->resting,
+             (unsigned)p->playful,(unsigned)p->bonus_minutes,(unsigned)p->best,
+             (unsigned)p->xp,(unsigned)p->care,(unsigned long)p->minutes);
     return true;
 }
 

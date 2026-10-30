@@ -33,6 +33,21 @@ def main():
         q=run(tap(184,408),True);assert not q['resting'],q
         p=run(tap(184,220));assert p['joy']==73 and p['care']==1,p
         q=run(tap(184,220)+tap(184,220));assert q['care']==1,q
+        # The enlarged care controls accept a higher tap and mild fingertip drift.
+        for x in (18,70,118):
+            for y in (371,397,424):
+                p=run(tap(x,y));assert p['food']==100 and p['care']==1,(x,y,p)
+        for x,field in ((184,'resting'),(296,'game_active')):
+            p=run(tap(x,375));assert p[field],p
+        for dx in (-24,24):
+            drift=f'touch=down,70,398\nadvance=40\ntouch=move,{70+dx},395\nadvance=40\ntouch=up,{70+dx},395\nadvance=80\n'
+            p=run(drift);assert p['food']==100 and p['care']==1,(dx,p)
+        # Distinct buttons must not share the old 600 ms lockout.
+        p=run(tap(70,398)+tap(184,398));assert p['food']==100 and p['resting'],p
+        p=run(tap(184,398)+tap(296,398));assert p['resting'] and p['game_active'],p
+        # A deliberate drag out of a care button cancels it; no accidental meal.
+        p=run('touch=down,70,398\nadvance=40\ntouch=move,70,300\nadvance=40\ntouch=up,70,300\nadvance=80\n')
+        assert p['food']==75 and p['care']==0,p
         game=tap(296,408)
         p=run(game);assert p['game_active'] and p['cell']==4,p
         p=run(game+tap(184,225));assert p['score']==1 and p['cell']!=4,p

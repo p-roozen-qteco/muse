@@ -134,3 +134,9 @@ geïnstalleerd.
 Het terugkomen van verzorgingswaarden na een fysieke herstart is nog niet door
 de eigenaar bevestigd; bewaren en herstellen zijn wel geautomatiseerd getest.
 Meerdaagse stabiliteit en batterijduur blijven afzonderlijke duurproeven.
+
+## Vervolg: bediening en duurmetingen
+
+Zie [de herstartproef, grotere knoppen en duurmetingen](waveshare-s3-18-soak.md)
+voor de opvolgende kandidaat `999.0.0-s3tama-test2`. De resultaten hierboven
+blijven de acceptatie van test1.
