@@ -83,3 +83,28 @@ onvoltooide USB-observatie, geen geslaagde 24-uurstest en geen batterijmeting.
 Een volgende duurtest gebruikt een nieuwe meetmap, firmwareversie en starttijd.
 De oude meetgegevens en back-up worden privé bewaard. Tijdens de installatie
 is de geplande opvolging gepauzeerd om geen twee USB-lezers tegelijk te starten.
+
+## Geautomatiseerde resultaten, 30 oktober 2026
+
+- **945 hosttests:** 941 geslaagd en 4 bestaande skips voor externe
+  afhankelijkheden/hardware. Inclusief de 14 nieuwe sensor-/spelkerntests.
+- **13 simulatorcontroles geslaagd** met ASan/UBSan, echte LVGL-aanrakingen,
+  gesimuleerde kanteling en behoud van de eerdere spel-/verzorgingsproeven.
+- Beide S3-varianten bouwen met ESP-IDF 6.0.1. De S3 1.8-app is 2.166.784
+  bytes; 48% van de app-partitie blijft vrij. Nieuwe sensor-/spelobjecten zijn
+  gelinkt en de partitietabel is bytegelijk aan test2.
+- De verse volledige 16 MB-back-up bevat exact de eerder geaccepteerde
+  test2-app. Het nieuwe firmwarepakket is privé en heeft bestandscontrolesommen.
+
+Fysieke kantelrichting en geluid worden na installatie apart gecontroleerd.
+Een nieuwe 24-uurstest is nog geen afgeronde stabiliteits- of batterijproef.
+
+## Installatie op het bord
+
+Test3 is geïnstalleerd; alle vier firmwaresegmenten zijn geverifieerd.
+Het bord bereikt `starting`, herkent de QMI8658 en verbindt met Wi-Fi, Muse en
+Link zonder crashmeldingen in de opstartregistratie. Alle tien direct vóór het
+flashen opgeslagen verzorgingsvelden zijn exact teruggekomen. Volume 100,
+speaker aan, microfoonversterking 30 dB, helderheid 50 en slaapinstelling 0 zijn
+behouden. Dit bevestigt de softwarestart en sensoridentiteit, nog niet de
+fysieke kantelrichting of het hoorbare antwoord tijdens dit spel.
