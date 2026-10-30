@@ -105,3 +105,15 @@ remaining long-term validation.
   copy. Four actual UI screenshots were inspected at 368×448.
 - Hardware automatic-speech and touch acceptance is still pending; the results
   above do not claim a successful Muse service round trip or a multiday soak.
+
+### Installation observations, 2026-10-30
+
+`999.0.0-s3pet-test1` was written successfully; all four flash segments passed
+esptool verification. The NVS settings region is byte-for-byte identical to the
+fresh pre-flash backup. Volume, speaker enablement, microphone gain, brightness
+and sleep settings match their previous values. Six status requests succeeded;
+the firmware identifies the correct board and version, with Wi-Fi connected,
+Muse connected and Link online. No panic/assert/heap-corruption markers occurred
+in the captured post-flash boot log. These observations establish startup and
+connectivity, not yet automatic playback or physical touch acceptance. Those
+questions have been sent to the owner while a read-only USB capture runs.
